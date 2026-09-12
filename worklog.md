@@ -909,3 +909,59 @@ Task: Periodic QA round — implement last round's top recommendations (video th
 7. **User profile customization** — let users change their display name + avatar color after onboarding. Low value.
 
 Priority recommendation for the next round: **#6 (file multi-select + bulk download as zip)** as the highest productivity-value feature (users with many files currently download one at a time), then **#7 (user profile customization)** for personalization.
+
+---
+Task ID: 19
+Agent: cron-review-202609130440 (main)
+Task: Periodic QA round — implement last round's top recommendations (file multi-select + bulk zip download, user profile customization).
+
+## Current project status / assessment
+- All three servers were up at the start. Lint baseline: clean.
+- Quick QA confirmed main app stable (2 online), no regressions.
+- Implemented both recommendations from Task 18's handover.
+
+## Completed modifications + verification
+
+### 1. File multi-select + bulk download as ZIP (top recommendation)
+- **Backend:** `src/app/api/files/zip/route.ts` — `POST {fileIds, deviceId}` endpoint that creates a ZIP archive. Originally tried `archiver` (npm) but webpack/ESM interop broke it; switched to a **pure Node.js ZIP store writer** using `Buffer` + `zlib.crc32` — zero external dependencies. Constructs valid ZIP local file headers + central directory + EOCD record. Deduplicates filenames. Only includes files the requesting device can access (sender / broadcast / recipient).
+- **FileShare frontend:**
+  - New `selectedFileIds` state (Set<string>) with `toggleFileSelection`, `selectAllFiltered`, `clearSelection`.
+  - Each `FileCard` now has a **selection checkbox** (top-left, brand-colored when selected, hover-revealed when not). Card gets `ring-2 ring-brand` when selected.
+  - **Bulk-action bar** appears when files are selected: shows "N selected" count + "Select all" / "Deselect all" / "Clear" buttons + "Download as ZIP" button (brand-colored with Archive icon).
+  - `handleBulkZip()` — POSTs the selected file IDs to `/api/files/zip`, receives the blob, triggers a browser download as `lan-share-files.zip`, then clears the selection + shows a success toast.
+- **Verified:** selected files → bulk bar appeared → clicked "Download as ZIP" → toast appeared → ZIP API returned 200 with valid ZIP archive (`unzip -l` confirmed the file contents). ✓
+
+### 2. User profile customization (change display name + avatar color)
+- **New `ProfileDialog` component** (`src/components/lan/ProfileDialog.tsx`): a dialog with:
+  - Live avatar preview (DeviceAvatar showing the current name + color)
+  - Display name input with a "random name" (Shuffle) button
+  - Avatar color palette (10 colors as clickable swatches with a Check on the selected one)
+  - Save button → updates the store's `self` + re-emits `device:join` via socket so other devices see the new name/color immediately
+  - Uses the `key` prop remount pattern to avoid setState-in-effect lint issues (the parent conditionally mounts with `key="profile-open"`)
+- **AppShell:** new UserCog icon button in the header (before SoundToggle) that opens the ProfileDialog. The dialog is conditionally rendered only when `profileOpen` is true.
+- **Verified:** clicked the profile button → dialog opened → 10 color swatches rendered → changed name to "Custom Name" → clicked Save → dialog closed → sidebar self-card showed "CN" (initials) + "Custom Name" + "you" (the store update propagated to the sidebar). ✓
+
+## Verification results
+- `bun run lint` → clean (0 errors, 0 warnings).
+- agent-browser (via gateway port 81):
+  - File multi-select: selected files → checkbox appeared → bulk bar → "Download as ZIP" → toast ✓
+  - ZIP API: `curl POST /api/files/zip` → 200, valid ZIP, `unzip -l` confirmed contents ✓
+  - Profile dialog: opened → 10 color swatches → name change + save → sidebar updated ✓
+- ZIP endpoint verified via curl: status 200, `file` reports "Zip archive data", `unzip -l` lists the files correctly.
+
+## Files changed this round
+- `src/app/api/files/zip/route.ts` — NEW: ZIP store writer (pure Node.js, no archiver dependency) + POST handler with access control.
+- `src/components/lan/FileShare.tsx` — `selectedFileIds` state + selection handlers + `handleBulkZip` + bulk-action bar UI + selection checkbox on FileCard + `Check` icon import.
+- `src/components/lan/ProfileDialog.tsx` — NEW: profile edit dialog (name + color picker + live avatar preview + re-join on save).
+- `src/components/lan/AppShell.tsx` — profile button (UserCog) in header + ProfileDialog rendering + `profileOpen` state + `UserCog` icon import.
+
+## Unresolved issues / risks + next-phase recommendations
+1. **Environmental (unchanged):** Next.js dev server still dies ~30-55s after a Bash tool call due to the sandbox process-reaper. The system-started instance + the recurring 15-min cron job handle restart + QA. Code is correct.
+2. **Connection quality indicator** — show a signal-strength icon based on socket.io latency/RTT. Low value.
+3. **Admin "kick reason" input** — the admin kick/block flow doesn't let the admin type a reason shown to the user. Low value.
+4. **Message forwarding** — let users forward a message to another conversation. Low value.
+5. **Rich text / markdown in messages** — support bold/italic/code formatting. Low value.
+6. **Chat message copy** — let users copy a message's text to clipboard via a hover action. Low value.
+7. **Unread message divider** — show a "New messages" divider above the first unread message when returning to a conversation. Low value.
+
+Priority recommendation for the next round: **#6 (chat message copy)** as a small but useful UX addition (users currently can't copy message text without selecting it manually), then **#7 (unread message divider)** for chat UX polish.

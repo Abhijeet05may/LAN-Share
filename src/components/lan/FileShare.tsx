@@ -10,6 +10,7 @@ import {
   Users,
   User,
   CheckCircle2,
+  Check,
   X,
   Image as ImageIcon,
   FileText,
@@ -84,9 +85,11 @@ export function FileShare() {
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null);
   const [typeFilter, setTypeFilter] = useState<"all" | "image" | "doc" | "video" | "other">("all");
   const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date");
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const previewEnabled = publicSettings.filePreviewEnabled;
+  const hasSelection = selectedFileIds.size > 0;
 
   const others = devices.filter((d) => d.deviceId !== self?.deviceId);
 
@@ -204,6 +207,55 @@ export function FileShare() {
       });
     }
     toast.success(`Downloading “${f.originalName}”`);
+  };
+
+  // Toggle a single file's selection.
+  const toggleFileSelection = (id: string) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Select all / clear all (for the filtered list).
+  const selectAllFiltered = () => {
+    setSelectedFileIds(new Set(filteredFiles.map((f) => f.id)));
+  };
+  const clearSelection = () => setSelectedFileIds(new Set());
+
+  // Bulk-download selected files as a zip archive.
+  const handleBulkZip = async () => {
+    if (!self || !hasSelection) return;
+    const ids = Array.from(selectedFileIds);
+    toast.success(`Zipping ${ids.length} file${ids.length > 1 ? "s" : ""}…`);
+    try {
+      const res = await fetch("/api/files/zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileIds: ids, deviceId: self.deviceId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "lan-share-files.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${ids.length} file${ids.length > 1 ? "s" : ""} as zip`);
+      clearSelection();
+    } catch (err) {
+      toast.error("Bulk download failed", {
+        description: (err as Error).message,
+      });
+    }
   };
 
   return (
@@ -387,15 +439,57 @@ export function FileShare() {
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 File history
               </h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={refreshFiles}
-                className="h-7 text-xs"
-              >
-                Refresh
-              </Button>
+              <div className="flex items-center gap-2">
+                {hasSelection && (
+                  <span className="text-[11px] font-medium text-brand tabular-nums">
+                    {selectedFileIds.size} selected
+                  </span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={refreshFiles}
+                  className="h-7 text-xs"
+                >
+                  Refresh
+                </Button>
+              </div>
             </div>
+
+            {/* Bulk-action bar (appears when files are selected) */}
+            {hasSelection && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border bg-brand/5 px-3 py-2 animate-slide-up">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedFileIds.size === filteredFiles.length) clearSelection();
+                      else selectAllFiltered();
+                    }}
+                    className="h-7 text-xs"
+                  >
+                    {selectedFileIds.size === filteredFiles.length ? "Deselect all" : "Select all"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearSelection}
+                    className="h-7 text-xs"
+                  >
+                    <X className="h-3.5 w-3.5 mr-1" /> Clear
+                  </Button>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={handleBulkZip}
+                  className="h-7 text-xs bg-brand hover:bg-brand/90 text-brand-foreground"
+                >
+                  <Archive className="h-3.5 w-3.5 mr-1.5" />
+                  Download as ZIP
+                </Button>
+              </div>
+            )}
             {files.length > 0 && (
               <div className="flex items-center justify-between gap-2 flex-wrap px-1">
                 <div className="flex items-center gap-1 flex-wrap">
@@ -463,6 +557,8 @@ export function FileShare() {
                     file={f}
                     mine={f.senderId === self?.deviceId}
                     previewEnabled={previewEnabled}
+                    selected={selectedFileIds.has(f.id)}
+                    onToggleSelect={() => toggleFileSelection(f.id)}
                     onDownload={() => handleDownload(f)}
                     onDelete={() => handleDelete(f.id)}
                     onPreview={() => setPreviewFile(f)}
@@ -529,6 +625,8 @@ function FileCard({
   file,
   mine,
   previewEnabled,
+  selected,
+  onToggleSelect,
   onDownload,
   onDelete,
   onPreview,
@@ -536,6 +634,8 @@ function FileCard({
   file: FileRecord;
   mine: boolean;
   previewEnabled: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   onDownload: () => void;
   onDelete: () => void;
   onPreview: () => void;
@@ -548,7 +648,31 @@ function FileCard({
     : "Selected devices";
 
   return (
-    <div className="group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-shadow">
+    <div
+      className={cn(
+        "group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-all relative",
+        selected && "ring-2 ring-brand"
+      )}
+    >
+      {/* Selection checkbox — top-left, always visible */}
+      {onToggleSelect && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect();
+          }}
+          className={cn(
+            "absolute top-2 left-2 z-10 h-6 w-6 rounded-md flex items-center justify-center transition-all",
+            selected
+              ? "bg-brand text-brand-foreground opacity-100"
+              : "bg-background/80 backdrop-blur-sm border opacity-0 group-hover:opacity-100"
+          )}
+          title={selected ? "Deselect" : "Select"}
+          aria-label={selected ? "Deselect file" : "Select file"}
+        >
+          {selected && <Check className="h-3.5 w-3.5" />}
+        </button>
+      )}
       {/* Thumbnail / icon area — full-bleed image for images, icon for others */}
       <button
         onClick={canPreview ? onPreview : onDownload}

@@ -14,6 +14,7 @@ import {
   ShieldOff,
   Volume2,
   VolumeX,
+  UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import { DeviceList } from "./DeviceList";
 import { ChatPanel } from "./ChatPanel";
 import { FileShare } from "./FileShare";
 import { NetworkInfo } from "./NetworkInfo";
+import { ProfileDialog } from "./ProfileDialog";
 import { RealtimeProvider } from "@/lib/lan/RealtimeProvider";
 import { useLanStore } from "@/lib/lan/store";
 import { usePublicSettings } from "@/lib/lan/usePublicSettings";
@@ -54,6 +56,7 @@ function ShellInner() {
 
   const [view, setView] = useState<View>("chat");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const selectConversation = (c: typeof activeConversation) => {
     setActiveConversation(c);
@@ -166,6 +169,16 @@ function ShellInner() {
 
           {/* Actions */}
           <div className="flex items-center gap-1 shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setProfileOpen(true)}
+              title="Edit profile"
+              aria-label="Edit profile"
+            >
+              <UserCog className="h-4 w-4" />
+            </Button>
             <SoundToggle />
             <ThemeToggle />
             <Button
@@ -272,6 +285,11 @@ function ShellInner() {
           />
         </div>
       </nav>
+
+      {/* Profile edit dialog — remounts on each open via key so form state is fresh */}
+      {profileOpen && (
+        <ProfileDialog key="profile-open" open={profileOpen} onOpenChange={setProfileOpen} />
+      )}
     </div>
   );
 }
