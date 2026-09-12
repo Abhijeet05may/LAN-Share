@@ -744,3 +744,58 @@ Task: Periodic QA round — implement last round's top recommendation (file drag
 7. **File preview thumbnails in the history grid** — show image thumbnails instead of just the file-type icon for image files. Medium value.
 
 Priority recommendation for the next round: **#7 (image thumbnails in file history)** as the highest visual-value polish (image files currently show only a generic image icon; showing actual thumbnails would make the history grid much more useful), then **#5 (keyboard shortcuts)** for power-user productivity.
+
+---
+Task ID: 16
+Agent: cron-review-202609130411 (main)
+Task: Periodic QA round — implement last round's top recommendations (image thumbnails, keyboard shortcuts) + pinned conversations.
+
+## Current project status / assessment
+- Next.js was down at start (sandbox reaper); socket.io (3003) + internal (3004) were up. Lint baseline: clean.
+- Brought Next.js back via the blocking-call technique for verification.
+- Quick QA confirmed main app stable, no regressions.
+- Implemented the top 2 recommendations from Task 15's handover (image thumbnails, keyboard shortcuts) plus a bonus pinned-conversations feature.
+
+## Completed modifications + verification
+
+### 1. Image thumbnails in file history grid (top recommendation)
+- **New `FileThumbnail` component** in FileShare: for image files, lazy-loads the actual image from `/api/download/{fileId}` as a full-bleed thumbnail (`object-cover`, `h-24`) with a loading spinner (Loader2 animate-spin) and a graceful fallback to the file-type icon on load error. Non-image files still show the colored file-type icon centered on the gradient background.
+- **FileCard redesigned**: changed from a horizontal layout (icon + content side-by-side) to a vertical card (thumbnail on top, content below). The thumbnail/button area is now `w-full h-24` with `overflow-hidden`, giving image files a prominent visual preview. Hover dims the thumbnail (`brightness-95`).
+- **Verified:** uploaded a test PNG → after refresh, the thumbnail loaded successfully (`complete:true`, `naturalWidth:1`, `opacity:1`). Non-image files (test-upload.txt) correctly show the file-type icon fallback. ✓
+
+### 2. Keyboard shortcuts
+- **ChatPanel:** new global `keydown` listener with three shortcuts:
+  - **Ctrl/Cmd+K** → toggles the message search bar (works even while typing)
+  - **Esc** → closes the search bar if open (clears the query), else blurs the focused input
+  - **/** → focuses the message input (Slack/Discord-style; only fires when not already in an input/textarea and no modifier keys held)
+- The search button tooltip now reads "Search (Ctrl+K)" to make the shortcut discoverable.
+- **Verified:** Ctrl+K opened the search bar; `/` focused the textarea (active element became TEXTAREA). ✓
+
+### 3. Pinned conversations (bonus feature)
+- **Store:** added `pinnedConversations: string[]` + `toggleConversationPinned(c)`, persisted in localStorage. Pinned conversations sort to the top of the sidebar device list.
+- **DeviceList:** the `others` useMemo now sorts by: pinned first → online → offline. Each `ConversationRow` (group + per-device) has a pin toggle button (Pin/PinOff icon) that's always visible when pinned (brand-colored) and hover-revealed when not pinned. Clicking it calls `e.stopPropagation()` so it doesn't trigger the conversation open.
+- **Verified:** hovered over the Group Chat row → pin button appeared → clicked → button switched to "Unpin" (PinOff icon). ✓
+
+## Verification results
+- `bun run lint` → clean (0 errors, 0 warnings).
+- agent-browser (via gateway port 81):
+  - Image thumbnail: uploaded PNG → loaded with `opacity:1`, `naturalWidth:1`, `complete:true` ✓
+  - Keyboard shortcuts: Ctrl+K → search bar opened; `/` → textarea focused; Esc wired ✓
+  - Pinned conversations: hover-revealed pin button → clicked → switched to Unpin ✓
+
+## Files changed this round
+- `src/components/lan/FileShare.tsx` — new `FileThumbnail` component; FileCard redesigned to vertical card with full-bleed thumbnail; `useState`/`cn`/`Loader2` used for thumbnail loading states.
+- `src/components/lan/ChatPanel.tsx` — global keyboard shortcuts (Ctrl+K, Esc, /); search button tooltip updated.
+- `src/lib/lan/store.ts` — `pinnedConversations` array + `toggleConversationPinned`, persisted.
+- `src/components/lan/DeviceList.tsx` — pinned sort + Pin/PinOff toggle button on ConversationRow; `pinnedConversations` store hook.
+
+## Unresolved issues / risks + next-phase recommendations
+1. **Environmental (unchanged):** Next.js dev server still dies ~30-55s after a Bash tool call due to the sandbox process-reaper. The system-started instance + the recurring 15-min cron job handle restart + QA. Code is correct.
+2. **Connection quality indicator** — show a signal-strength icon based on socket.io latency/RTT. Low value.
+3. **Admin "kick reason" input** — the admin kick/block flow doesn't let the admin type a reason shown to the user. Low value.
+4. **Video thumbnail preview** — video files could show a frame thumbnail (currently just the film icon). Medium value but requires server-side ffmpeg.
+5. **Message reactions (emoji)** — let users react to individual messages with emoji. Medium value.
+6. **Typing preview in the sidebar** — show "typing…" subtitle on device rows when that device is typing. Low value.
+7. **File sort options** — let users sort file history by name/size/date instead of just date desc. Low value.
+
+Priority recommendation for the next round: **#5 (message reactions)** as the highest engagement-value feature (emoji reactions on messages are expected in modern chat apps), then **#6 (typing preview in sidebar)** for real-time presence polish.

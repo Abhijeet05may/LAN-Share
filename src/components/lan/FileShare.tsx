@@ -513,50 +513,56 @@ function FileCard({
     : "Selected devices";
 
   return (
-    <div className="group rounded-xl border bg-card p-3 hover:shadow-md transition-shadow">
-      <div className="flex items-start gap-3">
-        <button
-          onClick={canPreview ? onPreview : onDownload}
-          className="h-11 w-11 rounded-lg bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center shrink-0 hover:scale-105 transition-transform"
-          title={canPreview ? "Preview" : "Download"}
-        >
-          <Icon className="h-5 w-5 text-muted-foreground" />
-        </button>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium truncate" title={file.originalName}>
-            {file.originalName}
-          </p>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-            <span className="text-[11px] text-muted-foreground">
-              {formatBytes(file.size)}
-            </span>
-            <span className="text-[11px] text-muted-foreground">·</span>
-            <span className="text-[11px] text-muted-foreground">
-              {mine ? "You" : file.senderName}
-            </span>
-            <span className="text-[11px] text-muted-foreground">·</span>
-            <span className="text-[11px] text-muted-foreground">
-              {relativeTime(file.createdAt)}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 mt-1.5">
-            <Badge
-              variant="secondary"
-              className="text-[10px] h-5 gap-1 font-normal"
-            >
-              {file.isBroadcast ? (
-                <Users className="h-2.5 w-2.5" />
-              ) : (
-                <User className="h-2.5 w-2.5" />
-              )}
-              {recipientLabel}
-            </Badge>
-            {file.downloadCount > 0 && (
-              <Badge variant="outline" className="text-[10px] h-5 font-normal">
-                <Download className="h-2.5 w-2.5 mr-1" />
-                {file.downloadCount}×
+    <div className="group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-shadow">
+      {/* Thumbnail / icon area — full-bleed image for images, icon for others */}
+      <button
+        onClick={canPreview ? onPreview : onDownload}
+        className="relative block w-full h-24 bg-gradient-to-br from-muted to-muted/40 flex items-center justify-center hover:brightness-95 transition-all overflow-hidden"
+        title={canPreview ? "Preview" : "Download"}
+      >
+        <FileThumbnail
+          fileId={file.id}
+          isImage={isImageMime(file.mimeType)}
+          Icon={Icon}
+        />
+      </button>
+      <div className="p-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium truncate" title={file.originalName}>
+              {file.originalName}
+            </p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+              <span className="text-[11px] text-muted-foreground">
+                {formatBytes(file.size)}
+              </span>
+              <span className="text-[11px] text-muted-foreground">·</span>
+              <span className="text-[11px] text-muted-foreground">
+                {mine ? "You" : file.senderName}
+              </span>
+              <span className="text-[11px] text-muted-foreground">·</span>
+              <span className="text-[11px] text-muted-foreground">
+                {relativeTime(file.createdAt)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <Badge
+                variant="secondary"
+                className="text-[10px] h-5 gap-1 font-normal"
+              >
+                {file.isBroadcast ? (
+                  <Users className="h-2.5 w-2.5" />
+                ) : (
+                  <User className="h-2.5 w-2.5" />
+                )}
+                {recipientLabel}
               </Badge>
-            )}
+              {file.downloadCount > 0 && (
+                <Badge variant="outline" className="text-[10px] h-5 font-normal">
+                  <Download className="h-2.5 w-2.5 mr-1" />
+                  {file.downloadCount}×
+                </Badge>
+              )}
           </div>
         </div>
         <DropdownMenu>
@@ -593,7 +599,51 @@ function FileCard({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
     </div>
+  );
+}
+
+// Renders an image thumbnail (lazy-loaded from /api/download/:id) for image
+// files, falling back to the file-type icon for non-images or on load error.
+function FileThumbnail({
+  fileId,
+  isImage,
+  Icon,
+}: {
+  fileId: string;
+  isImage: boolean;
+  Icon: React.ComponentType<{ className?: string }>;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  if (!isImage || errored) {
+    return <Icon className="h-8 w-8 text-muted-foreground" />;
+  }
+
+  return (
+    <>
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
+      <img
+        src={`/api/download/${fileId}`}
+        alt=""
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          setErrored(true);
+          setLoaded(true);
+        }}
+        className={cn(
+          "absolute inset-0 w-full h-full object-cover transition-opacity duration-200",
+          loaded ? "opacity-100" : "opacity-0"
+        )}
+      />
+    </>
   );
 }

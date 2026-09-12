@@ -99,6 +99,10 @@ interface LanState {
   // per-conversation mute (persisted). Keyed by ConversationId ("group" or peer deviceId).
   mutedConversations: string[];
   toggleConversationMuted: (c: ConversationId) => void;
+
+  // pinned conversations (persisted). Pinned ones sort to the top of the sidebar.
+  pinnedConversations: string[];
+  toggleConversationPinned: (c: ConversationId) => void;
 }
 
 export const useLanStore = create<LanState>()(
@@ -273,6 +277,14 @@ export const useLanStore = create<LanState>()(
             ? st.mutedConversations.filter((x) => x !== c)
             : [...st.mutedConversations, c],
         })),
+
+      pinnedConversations: [],
+      toggleConversationPinned: (c) =>
+        set((st) => ({
+          pinnedConversations: st.pinnedConversations.includes(c)
+            ? st.pinnedConversations.filter((x) => x !== c)
+            : [...st.pinnedConversations, c],
+        })),
     }),
     {
       name: "lan-share:store",
@@ -281,6 +293,7 @@ export const useLanStore = create<LanState>()(
         roomPin: s.roomPin,
         soundEnabled: s.soundEnabled,
         mutedConversations: s.mutedConversations,
+        pinnedConversations: s.pinnedConversations,
       }),
     }
   )

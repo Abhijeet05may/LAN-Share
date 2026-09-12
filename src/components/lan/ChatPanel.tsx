@@ -158,6 +158,42 @@ export function ChatPanel({
     [input, maxLen]
   );
 
+  // Keyboard shortcuts:
+  //   Ctrl/Cmd+K → toggle message search
+  //   Esc        → close search / blur input
+  //   /          → focus the message input (Slack-style)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isTyping = tag === "INPUT" || tag === "TEXTAREA";
+      // Ctrl/Cmd+K → toggle search (works even while typing)
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+        return;
+      }
+      // Esc → close search if open, else blur the textarea
+      if (e.key === "Escape") {
+        if (searchOpen) {
+          setSearchQuery("");
+          setSearchOpen(false);
+          return;
+        }
+        if (isTyping) {
+          (e.target as HTMLElement).blur();
+          return;
+        }
+      }
+      // "/" focuses the input (unless already typing or a modifier is held)
+      if (e.key === "/" && !isTyping && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        textareaRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [searchOpen]);
+
   // Clear unread when viewing.
   useEffect(() => {
     clearUnread(conversationId);
@@ -433,7 +469,7 @@ export function ChatPanel({
             className="h-11 w-11 shrink-0"
             onClick={() => setSearchOpen((v) => !v)}
             aria-label="Search messages"
-            title="Search"
+            title="Search (Ctrl+K)"
           >
             <Search className="h-4 w-4" />
           </Button>

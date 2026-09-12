@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Users, MessageCircle, Wifi, WifiOff, Crown, BellOff, FileUp } from "lucide-react";
+import { Users, MessageCircle, Wifi, WifiOff, Crown, BellOff, FileUp, Pin, PinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,6 +27,8 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
   const connected = useLanStore((s) => s.connected);
   const clearUnread = useLanStore((s) => s.clearUnread);
   const mutedConversations = useLanStore((s) => s.mutedConversations);
+  const pinnedConversations = useLanStore((s) => s.pinnedConversations);
+  const toggleConversationPinned = useLanStore((s) => s.toggleConversationPinned);
   const { uploadFiles } = useFileUpload();
 
   // Which device row is currently being dragged a file over (for highlight).
@@ -36,8 +38,15 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
     () =>
       devices
         .filter((d) => d.deviceId !== self?.deviceId)
-        .sort((a, b) => Number(b.online) - Number(a.online)),
-    [devices, self?.deviceId]
+        .sort((a, b) => {
+          // Pinned conversations sort to the top.
+          const aPinned = pinnedConversations.includes(a.deviceId) ? 0 : 1;
+          const bPinned = pinnedConversations.includes(b.deviceId) ? 0 : 1;
+          if (aPinned !== bPinned) return aPinned - bPinned;
+          // Then online before offline.
+          return Number(b.online) - Number(a.online);
+        }),
+    [devices, self?.deviceId, pinnedConversations]
   );
 
   const onlineCount = devices.filter((d) => d.online).length;
@@ -140,6 +149,8 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
               }
             }}
             dropActive={dropTargetId === "group"}
+            pinned={pinnedConversations.includes("group")}
+            onTogglePin={() => toggleConversationPinned("group")}
           />
 
           <div className="px-2 pt-3 pb-1 flex items-center justify-between">
@@ -210,6 +221,8 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
                     }
                   }}
                   dropActive={dropTargetId === d.deviceId}
+                  pinned={pinnedConversations.includes(d.deviceId)}
+                  onTogglePin={() => toggleConversationPinned(d.deviceId)}
                 />
               );
             })
@@ -235,6 +248,8 @@ function ConversationRow({
   onDragLeave,
   onDrop,
   dropActive,
+  pinned,
+  onTogglePin,
 }: {
   active: boolean;
   onClick: () => void;
@@ -250,6 +265,8 @@ function ConversationRow({
   onDragLeave?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
   dropActive?: boolean;
+  pinned?: boolean;
+  onTogglePin?: () => void;
 }) {
   return (
     <button
@@ -308,6 +325,29 @@ function ConversationRow({
           {dropActive ? "Drop to send file" : subtitle}
         </p>
       </div>
+      {/* Pin toggle — always visible when pinned, hover-revealed otherwise */}
+      {onTogglePin && !dropActive && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onTogglePin();
+          }}
+          className={cn(
+            "h-6 w-6 rounded-md flex items-center justify-center shrink-0 transition-all",
+            pinned
+              ? "opacity-100 text-brand"
+              : "opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-brand hover:bg-muted"
+          )}
+          title={pinned ? "Unpin" : "Pin to top"}
+          aria-label={pinned ? "Unpin conversation" : "Pin conversation"}
+        >
+          {pinned ? (
+            <PinOff className="h-3.5 w-3.5" />
+          ) : (
+            <Pin className="h-3.5 w-3.5" />
+          )}
+        </button>
+      )}
     </button>
   );
 }
