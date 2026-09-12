@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import os from "os";
 import QRCode from "qrcode";
 import { ensureRealtimeRunning } from "@/lib/lan/realtimeRunner";
+import { sweepExpiredFiles } from "@/lib/lan/fileExpiry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,8 @@ export async function GET() {
     // Ensure the realtime mini-service is up (spawned as a child of this
     // persistent Next.js server process so it survives the sandbox reaper).
     await ensureRealtimeRunning().catch(() => undefined);
+    // Sweep expired files per the admin auto-delete policy (throttled).
+    void sweepExpiredFiles().catch(() => undefined);
     const host = detectLanIp();
     const port = process.env.PORT || 3000;
     const url = `http://${host}:${port}`;

@@ -16,7 +16,7 @@ export async function POST(
     const { id } = await params;
 
     // Ask the realtime service to disconnect this device now.
-    fetch("http://127.0.0.1:3003/internal/kick", {
+    fetch("http://127.0.0.1:3004/internal/kick", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ deviceId: id, reason: "kicked_by_admin" }),

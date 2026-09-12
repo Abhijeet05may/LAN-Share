@@ -64,7 +64,7 @@ export async function PUT(request: Request) {
 
     // Fire-and-forget: tell realtime to push a `settings:updated` event to
     // every connected client so they can refetch /api/settings/public.
-    fetch("http://127.0.0.1:3003/internal/broadcast", {
+    fetch("http://127.0.0.1:3004/internal/broadcast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event: "settings:updated", payload: {} }),

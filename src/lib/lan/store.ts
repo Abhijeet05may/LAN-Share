@@ -10,7 +10,9 @@ import type {
   DeviceType,
   FileRecord,
   NetworkInfo,
+  PublicSettings,
 } from "./types";
+import { DEFAULT_PUBLIC_SETTINGS } from "./types";
 
 interface TypingEntry {
   senderId: string;
@@ -78,6 +80,10 @@ interface LanState {
   // network
   networkInfo: NetworkInfo | null;
   setNetworkInfo: (n: NetworkInfo | null) => void;
+
+  // public settings (from /api/settings/public, updated live via socket)
+  publicSettings: PublicSettings;
+  setPublicSettings: (s: Partial<PublicSettings>) => void;
 
   // room pin (optional gate)
   roomPin: string;
@@ -216,6 +222,10 @@ export const useLanStore = create<LanState>()(
 
       networkInfo: null,
       setNetworkInfo: (n) => set({ networkInfo: n }),
+
+      publicSettings: DEFAULT_PUBLIC_SETTINGS,
+      setPublicSettings: (s) =>
+        set((st) => ({ publicSettings: { ...st.publicSettings, ...s } })),
 
       roomPin: "",
       setRoomPin: (pin) => set({ roomPin: pin }),

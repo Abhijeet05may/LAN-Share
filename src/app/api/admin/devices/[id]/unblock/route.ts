@@ -19,7 +19,7 @@ export async function POST(
     await db.blockedDevice.deleteMany({ where: { deviceId: id } });
 
     // Broadcast to all clients so they can restore the device to their lists.
-    fetch("http://127.0.0.1:3003/internal/broadcast", {
+    fetch("http://127.0.0.1:3004/internal/broadcast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

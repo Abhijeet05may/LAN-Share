@@ -75,12 +75,16 @@ export function FileShare() {
   const updateTransfer = useLanStore((s) => s.updateTransfer);
   const removeTransfer = useLanStore((s) => s.removeTransfer);
   const removeFile = useLanStore((s) => s.removeFile);
+  const publicSettings = useLanStore((s) => s.publicSettings);
 
   const [dragOver, setDragOver] = useState(false);
   const [broadcast, setBroadcast] = useState(true);
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const previewEnabled = publicSettings.filePreviewEnabled;
+  const maxFileBytes = publicSettings.maxFileBytes;
 
   const others = devices.filter((d) => d.deviceId !== self?.deviceId);
 
@@ -116,7 +120,25 @@ export function FileShare() {
         return;
       }
 
+      // Client-side max-file-size guard (server also enforces). Reject before
+      // starting any chunk uploads so we don't waste bandwidth.
+      if (maxFileBytes > 0) {
+        const tooBig = arr.filter((f) => f.size > maxFileBytes);
+        if (tooBig.length) {
+          toast.error(`${tooBig.length} file(s) exceed the size limit`, {
+            description: `Max ${formatBytes(maxFileBytes)} · ${tooBig
+              .map((f) => f.name)
+              .slice(0, 3)
+              .join(", ")}`,
+          });
+        }
+      }
+
       for (const file of arr) {
+        // Skip files that exceed the client-side size limit.
+        if (maxFileBytes > 0 && file.size > maxFileBytes) {
+          continue;
+        }
         const transferId = `t_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 6)}`;
@@ -187,7 +209,7 @@ export function FileShare() {
         }
       }
     },
-    [self, broadcast, selectedRecipients, others.length, devices, addTransfer, updateTransfer, addFile, removeTransfer]
+    [self, broadcast, selectedRecipients, others.length, devices, addTransfer, updateTransfer, addFile, removeTransfer, maxFileBytes]
   );
 
   const onDrop = (e: React.DragEvent) => {
@@ -421,6 +443,7 @@ export function FileShare() {
                     key={f.id}
                     file={f}
                     mine={f.senderId === self?.deviceId}
+                    previewEnabled={previewEnabled}
                     onDownload={() => handleDownload(f)}
                     onDelete={() => handleDelete(f.id)}
                     onPreview={() => setPreviewFile(f)}
@@ -486,19 +509,21 @@ export function FileShare() {
 function FileCard({
   file,
   mine,
+  previewEnabled,
   onDownload,
   onDelete,
   onPreview,
 }: {
   file: FileRecord;
   mine: boolean;
+  previewEnabled: boolean;
   onDownload: () => void;
   onDelete: () => void;
   onPreview: () => void;
 }) {
   const kind = fileKind(file.mimeType, file.extension);
   const Icon = ICONS[kind.icon] || FileIcon;
-  const canPreview = isPreviewable(file.mimeType);
+  const canPreview = previewEnabled && isPreviewable(file.mimeType);
   const recipientLabel = file.isBroadcast
     ? "Everyone"
     : "Selected devices";

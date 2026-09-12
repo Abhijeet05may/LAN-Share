@@ -63,4 +63,34 @@ export interface NetworkInfo {
   qrCodeDataUrl: string | null;
 }
 
+// Subset of admin settings exposed (unauthenticated) to clients so the UI can
+// adapt live to admin changes (e.g. hide chat when disabled).
+export interface PublicSettings {
+  appName: string;
+  roomName: string;
+  themeDefault: "light" | "dark" | "system";
+  qrVisible: boolean;
+  pinEnabled: boolean;
+  groupChatEnabled: boolean;
+  privateChatEnabled: boolean;
+  typingIndicator: boolean;
+  filePreviewEnabled: boolean;
+  maxFileBytes: number; // 0 = unlimited
+  maxMessageLength: number; // 0 = unlimited
+}
+
+export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
+  appName: "LAN Share",
+  roomName: "Local Network",
+  themeDefault: "system",
+  qrVisible: true,
+  pinEnabled: false,
+  groupChatEnabled: true,
+  privateChatEnabled: true,
+  typingIndicator: true,
+  filePreviewEnabled: true,
+  maxFileBytes: 0,
+  maxMessageLength: 0,
+};
+
 export type ConversationId = "group" | string; // "group" or a peer deviceId

@@ -404,3 +404,73 @@ Stage Summary:
 
 ## Known environmental limitation
 - The sandbox's process reaper kills JS-runtime processes (node/bun) spawned via Bash tool calls after ~30-55s. The system-started Next.js was OOM-killed (Turbopack ~3GB) and cannot be persistently restarted from Bash. The recurring cron job (system-executed agent turns) handles restart + QA. Code is correct; this is purely a sandbox process-management constraint.
+
+---
+Task ID: 11
+Agent: cron-review-202609130245 (main)
+Task: Periodic QA round — assess status, fix bugs, add features + styling polish, update handover.
+
+## Current project status / assessment
+- The app + admin panel (Tasks 1–10) were already complete and verified in the prior session.
+- The system-started Next.js dev server had been OOM-killed (Turbopack ~3GB, cgroup limit 4GB). The realtime service was still running (system-spawned). Verified Next.js could be brought back transiently via `node ... next dev --webpack --max-old-space-size=768` (dies ~30-55s after a Bash tool call due to the documented process-reaper — only the system-managed instance is persistent).
+- Lint baseline: clean.
+
+## Bugs found during QA + fixes
+1. **CRITICAL — admin couldn't reach the realtime internal endpoints.** `/internal/devices` (and kick/broadcast) returned `{"code":0,"message":"Transport unknown"}`. Root cause: socket.io's Engine.io (path "/") intercepts ALL HTTP on port 3003, racing the async internal handler and winning. This meant the admin Devices table always showed "0 online" and IP "—".
+   - **Fix:** moved the internal HTTP endpoints to a **separate HTTP server on port 3004** (`internalServer`), leaving socket.io to own port 3003. Updated all 7 admin API routes from `127.0.0.1:3003/internal/*` → `127.0.0.1:3004/internal/*`. Verified `/internal/devices` now returns valid JSON and the admin Devices table shows live online status + IP.
+2. **Admin Devices table IP always "—".** Root cause: the admin route returned `d.ip` (DB field, empty because the realtime upsert never sent IP).
+   - **Fix:** (a) `/api/devices` POST now accepts + persists `ip`; (b) the realtime `device:join` upsert now sends `session.ip`; (c) the admin devices route now merges the live IP from `/internal/devices` for online devices and falls back to the persisted DB IP for offline ones. Verified: online device shows `21.0.0.1`, recently-connected shows `::1`, old pre-fix device shows `—`.
+
+## New features implemented
+3. **Admin settings now actually drive the client (Feature A — closes the admin→client loop).** Previously settings like `chat.groupEnabled` were cosmetic. Now:
+   - New `GET /api/settings/public` (already existed) is consumed by a new `usePublicSettings` hook (fetches on mount + live-refetches on the `settings:updated` socket event + on reconnect).
+   - `publicSettings` added to the Zustand store.
+   - `AppShell` header shows the configurable `appName`.
+   - `ChatPanel` respects: `typingIndicator` (doesn't send/display typing when off), `maxMessageLength` (clamps input + live char counter that turns amber past 90%), and group/private chat are gated in `AppShell` with a clean "Chat is disabled" empty-state (Ban/ShieldOff icons).
+   - `FileShare` respects: `filePreviewEnabled` (hides preview actions when off) and `maxFileBytes` (client-side reject + skip before wasting bandwidth; server still enforces).
+   - **Verified end-to-end:** disabled group chat in admin → main app instantly showed "Group chat is disabled" empty-state; re-enabling + broadcasting `settings:updated` restored it live.
+4. **File auto-exppiry worker (Feature B).** The `files.autoDeleteMode` setting (never/hours/afterDownload) was never enforced. New `src/lib/lan/fileExpiry.ts` runs a throttled (max 1×/5min) sweep triggered from `/api/network-info`. Implements: `hours` (delete files older than N hours), `afterDownload` (delete broadcast files once downloaded ≥1×, targeted files once every recipient has downloaded). Deletes file bytes + stray `.partN` chunks + DB rows.
+5. **Message search (Feature C).** ChatPanel now has a collapsible search bar (Search icon button in the input row) that filters messages by content or sender name, with a live "n/total" count badge and a "No matches" empty-state.
+6. **Date separators** in chat ("Today" / "Yesterday" / "Wed, Sep 11" between messages on different calendar days).
+7. **Scroll-to-bottom FAB** — a floating ArrowDown button appears when the user scrolls up; auto-scroll on new messages only fires when already near the bottom (so reading history isn't interrupted).
+8. **Live char counter** under the chat input when a `maxMessageLength` is set.
+
+## Styling polish
+- New `ChatDisabled` component with contextual icons (Ban for group, ShieldOff for private) + explanatory text.
+- Search bar uses `animate-slide-up`; jump button uses `animate-fade-in` + scale-on-hover.
+- Date separator uses a centered uppercase label between two `bg-border` hairlines.
+- File-type icons already colored via the existing palette.
+
+## Verification results
+- agent-browser through the Caddy gateway (port 81):
+  - Main app onboarding → join → header shows `publicSettings.appName` ✓
+  - Message search: typed "hello" → filtered to 1/5 result with count badge ✓
+  - Admin Devices table: online device shows live IP `21.0.0.1` + "Online" status ✓
+  - Settings→client loop: toggled group chat OFF in admin → saved → public API confirmed `groupChatEnabled:false` → main app showed "Group chat is disabled" empty-state ✓ → re-enabled + broadcast `settings:updated` → restored ✓
+  - `/internal/devices` via port 3004 returns valid JSON ✓
+  - `/internal/broadcast` via port 3004 returns `{"ok":true}` ✓
+- `bun run lint` → clean (0 errors, 0 warnings).
+
+## Files changed this round
+- `mini-services/realtime/index.ts` — added `INTERNAL_PORT=3004` + `internalServer` (separate HTTP server) + `internalHandler`; device upsert now sends `ip`.
+- `src/app/api/admin/{dashboard,devices,devices/[id]/block,devices/[id]/kick,devices/[id]/unblock,maintenance/reset-settings,settings}/route.ts` — `3003/internal` → `3004/internal`.
+- `src/app/api/admin/devices/route.ts` — merged live IP from `/internal/devices` for online devices.
+- `src/app/api/devices/route.ts` — accepts + persists `ip`.
+- `src/lib/lan/store.ts` + `src/lib/lan/types.ts` — added `publicSettings` + `PublicSettings` type + `DEFAULT_PUBLIC_SETTINGS`.
+- `src/lib/lan/usePublicSettings.ts` — NEW hook (fetch + live-refetch on `settings:updated`/reconnect).
+- `src/lib/lan/fileExpiry.ts` — NEW throttled auto-delete sweep.
+- `src/app/api/network-info/route.ts` — triggers `sweepExpiredFiles()`.
+- `src/components/lan/AppShell.tsx` — uses `publicSettings.appName`; gates group/private chat; `ChatDisabled` component.
+- `src/components/lan/ChatPanel.tsx` — message search, date separators, scroll-to-bottom FAB, char counter, respects typing/maxLen settings.
+- `src/components/lan/FileShare.tsx` — respects `filePreviewEnabled` + `maxFileBytes`.
+
+## Unresolved issues / risks + next-phase recommendations
+1. **Environmental (unchanged):** the sandbox process-reaper kills JS-runtime processes (node/bun) spawned via Bash tool calls after ~30-55s. The system-started Next.js was OOM-killed and cannot be persistently restarted from Bash. The recurring 15-min cron job (system-executed agent turns) is the mechanism that keeps the server up + does QA. Recommendation: **raise the cgroup memory limit or switch the system supervisor to `next dev --webpack --max-old-space-size=768`** (webpack uses ~1/3 the memory of Turbopack) to avoid the OOM that started this whole issue.
+2. **The `theme.default` admin setting isn't applied for NEW devices** — next-themes persists per-browser, so a new device still starts from its system preference. To honor the admin default, the Onboarding/page.tsx could call `setTheme(publicSettings.themeDefault)` on first visit (only if the user hasn't explicitly chosen). Low priority.
+3. **Message editing/deletion** — users can't delete their own messages. Would need a `DELETE /api/messages/[id]` route + a socket `chat:deleted` event + a hover action on bubbles. Medium value.
+4. **Sound + richer desktop notifications** for incoming files/messages (with a per-user toggle in the main app header). Medium value.
+5. **Admin dashboard live auto-refresh** (every 10s) for the active-connections count + a small activity sparkline. Low value.
+6. **Admin device "online now" filter** + a live-updating devices table (socket-driven, not just refresh button). Medium value.
+7. **Room PIN enforcement** — `network.pinEnabled`/`network.pin` exist but the client doesn't gate join on a PIN. Would need a PIN entry step in Onboarding + the realtime service to reject joins without a valid PIN. Medium value (security-relevant).
+
+Priority recommendation for the next round: **#1 (memory/webpack) first** since it's the root cause of the server dying and blocking all live QA; then **#3 (message delete)** and **#7 (room PIN)** as the highest user/security value features.

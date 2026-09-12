@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     await resetSettings();
 
     // Tell clients to refetch public settings (now back to defaults).
-    fetch("http://127.0.0.1:3003/internal/broadcast", {
+    fetch("http://127.0.0.1:3004/internal/broadcast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event: "settings:updated", payload: {} }),

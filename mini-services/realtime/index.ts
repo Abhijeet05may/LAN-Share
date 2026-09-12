@@ -50,6 +50,7 @@ const deviceIdToSocket = new Map<string, string>();
 // ---------------------------------------------------------------------------
 
 const PORT = 3003;
+const INTERNAL_PORT = 3004; // separate HTTP server for admin/internal endpoints
 const HOST = "0.0.0.0";
 const SOCKET_PATH = "/"; // MUST stay "/" — Caddy depends on it
 const MESSAGES_API = "http://localhost:3000/api/messages";
@@ -159,15 +160,25 @@ async function isDeviceBlocked(
 // Server setup
 // ---------------------------------------------------------------------------
 
-const httpServer = createServer(async (req, res) => {
-  // Only handle /internal/* paths. Everything else falls through to socket.io
-  // (socket.io attaches its own request listener to the same server).
+// Internal HTTP request handler for admin endpoints (kick/broadcast/devices).
+// Runs on a SEPARATE httpServer (port 3004) so socket.io's Engine.io — which
+// intercepts ALL requests on the socket port (path "/") — doesn't race us.
+async function internalHandler(req: any, res: any) {
+  // CORS: server-to-server only, but allow any origin for safety.
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
   if (!req.url || !req.url.startsWith("/internal")) {
     res.statusCode = 404;
     res.end();
     return;
   }
-  // CORS not needed (server-to-server). Parse body for POST.
+  // Parse body for POST.
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
   const bodyRaw = Buffer.concat(chunks).toString("utf8");
@@ -232,7 +243,10 @@ const httpServer = createServer(async (req, res) => {
     res.statusCode = 500;
     res.end(JSON.stringify({ error: String(err) }));
   }
-});
+}
+
+// socket.io server (port 3003) — Engine.io owns all HTTP on this port.
+const httpServer = createServer();
 const io = new Server(httpServer, {
   path: SOCKET_PATH,
   cors: {
@@ -240,6 +254,9 @@ const io = new Server(httpServer, {
     methods: ["GET", "POST"],
   },
 });
+
+// Internal admin HTTP server (port 3004) — fully independent from socket.io.
+const internalServer = createServer(internalHandler);
 
 // ---------------------------------------------------------------------------
 // Connection lifecycle
@@ -302,8 +319,8 @@ io.on("connection", (socket: Socket) => {
       deviceIdToSocket.set(deviceId, socket.id);
 
       // Fire-and-forget: upsert device so IP + lastSeen are recorded in DB.
-      // (The Next.js /api/devices route upserts; IP is authoritative from
-      // realtime's /internal/devices endpoint, but lastSeen is updated here.)
+      // (The Next.js /api/devices route upserts; IP is also authoritative from
+      // realtime's /internal/devices endpoint for live sessions.)
       fetch("http://localhost:3000/api/devices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -313,6 +330,7 @@ io.on("connection", (socket: Socket) => {
           deviceType,
           userAgent,
           avatarColor,
+          ip: session.ip,
         }),
       }).catch((err) =>
         log(`device upsert error: ${(err as Error)?.message ?? err}`),
@@ -588,6 +606,12 @@ io.on("connection", (socket: Socket) => {
 httpServer.listen(PORT, HOST, () => {
   log(
     `Socket.io realtime service listening on http://${HOST}:${PORT} (path="${SOCKET_PATH}")`,
+  );
+});
+
+internalServer.listen(INTERNAL_PORT, HOST, () => {
+  log(
+    `Internal admin HTTP service listening on http://${HOST}:${INTERNAL_PORT}`,
   );
 });
 

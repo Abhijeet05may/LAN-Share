@@ -10,6 +10,8 @@ import {
   LogOut,
   Users,
   ChevronLeft,
+  Ban,
+  ShieldOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -22,6 +24,7 @@ import { FileShare } from "./FileShare";
 import { NetworkInfo } from "./NetworkInfo";
 import { RealtimeProvider } from "@/lib/lan/RealtimeProvider";
 import { useLanStore } from "@/lib/lan/store";
+import { usePublicSettings } from "@/lib/lan/usePublicSettings";
 import { toast } from "sonner";
 
 type View = "chat" | "files" | "network";
@@ -42,6 +45,10 @@ function ShellInner() {
   const activeConversation = useLanStore((s) => s.activeConversation);
   const setActiveConversation = useLanStore((s) => s.setActiveConversation);
   const unread = useLanStore((s) => s.unread);
+  const publicSettings = useLanStore((s) => s.publicSettings);
+
+  // Fetch public settings on mount + live-refetch on `settings:updated`.
+  usePublicSettings();
 
   const [view, setView] = useState<View>("chat");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -109,7 +116,7 @@ function ShellInner() {
             </div>
             <div className="hidden sm:block min-w-0">
               <h1 className="text-sm font-semibold leading-tight truncate">
-                LAN Share
+                {publicSettings.appName}
               </h1>
               <p className="text-[11px] text-muted-foreground leading-tight">
                 {connected ? (
@@ -195,15 +202,23 @@ function ShellInner() {
           <div className="flex-1 min-h-0 flex flex-col">
           {view === "chat" ? (
             activeConversation === "group" ? (
-              <ChatPanel conversationId="group" />
+              publicSettings.groupChatEnabled ? (
+                <ChatPanel conversationId="group" />
+              ) : (
+                <ChatDisabled mode="group" />
+              )
             ) : peer ? (
-              <ChatPanel
-                conversationId={peer.deviceId}
-                peerName={peer.name}
-                peerColor={peer.avatarColor}
-                peerDeviceType={peer.deviceType}
-                peerOnline={peer.online}
-              />
+              publicSettings.privateChatEnabled ? (
+                <ChatPanel
+                  conversationId={peer.deviceId}
+                  peerName={peer.name}
+                  peerColor={peer.avatarColor}
+                  peerDeviceType={peer.deviceType}
+                  peerOnline={peer.online}
+                />
+              ) : (
+                <ChatDisabled mode="private" peerName={peer.name} />
+              )
             ) : (
               <EmptyPeer
                 onBack={() => setActiveConversation("group")}
@@ -298,6 +313,32 @@ function EmptyPeer({ onBack }: { onBack: () => void }) {
       <Button variant="outline" size="sm" className="mt-4" onClick={onBack}>
         Back to group chat
       </Button>
+    </div>
+  );
+}
+
+function ChatDisabled({
+  mode,
+  peerName,
+}: {
+  mode: "group" | "private";
+  peerName?: string;
+}) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
+      <div className="h-14 w-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+        {mode === "group" ? (
+          <Ban className="h-7 w-7 text-muted-foreground" />
+        ) : (
+          <ShieldOff className="h-7 w-7 text-muted-foreground" />
+        )}
+      </div>
+      <h3 className="text-sm font-semibold">
+        {mode === "group" ? "Group chat is disabled" : `Private chat with ${peerName} is disabled`}
+      </h3>
+      <p className="text-xs text-muted-foreground mt-1 max-w-[280px]">
+        An admin has turned off {mode === "group" ? "group" : "private"} messaging for this network. You can still share files and view the network info.
+      </p>
     </div>
   );
 }

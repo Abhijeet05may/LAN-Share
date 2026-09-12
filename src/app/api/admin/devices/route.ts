@@ -19,7 +19,7 @@ interface RealtimeDevice {
 // "all offline").
 async function fetchLiveDevices(): Promise<RealtimeDevice[]> {
   try {
-    const r = await fetch("http://127.0.0.1:3003/internal/devices", {
+    const r = await fetch("http://127.0.0.1:3004/internal/devices", {
       signal: AbortSignal.timeout(2000),
     });
     if (!r.ok) return [];
@@ -44,20 +44,28 @@ export async function GET(request: Request) {
     const onlineIds = new Set(
       live.map((d) => d.deviceId).filter((x): x is string => !!x)
     );
+    const liveByDeviceId = new Map(
+      live.map((d) => [d.deviceId, d] as const).filter(([k]) => !!k)
+    );
     const blockedIds = new Set(blocked.map((b) => b.deviceId));
 
-    const out = devices.map((d) => ({
-      id: d.id,
-      name: d.name,
-      deviceType: d.deviceType,
-      userAgent: d.userAgent,
-      ip: d.ip,
-      avatarColor: d.avatarColor,
-      createdAt: d.createdAt,
-      lastSeen: d.lastSeen,
-      online: onlineIds.has(d.id),
-      blocked: blockedIds.has(d.id),
-    }));
+    const out = devices.map((d) => {
+      const liveRec = liveByDeviceId.get(d.id);
+      return {
+        id: d.id,
+        name: d.name,
+        deviceType: d.deviceType,
+        userAgent: d.userAgent,
+        // Prefer the live IP (authoritative) when online; fall back to the
+        // last-known IP persisted in the DB for offline devices.
+        ip: liveRec?.ip || d.ip || "",
+        avatarColor: d.avatarColor,
+        createdAt: d.createdAt,
+        lastSeen: d.lastSeen,
+        online: onlineIds.has(d.id),
+        blocked: blockedIds.has(d.id),
+      };
+    });
 
     return adminJson({ devices: out }, auth.renewedCookie);
   } catch (err) {

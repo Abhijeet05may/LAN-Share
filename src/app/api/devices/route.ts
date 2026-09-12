@@ -23,12 +23,13 @@ interface PostBody {
   deviceType?: string;
   userAgent?: string;
   avatarColor?: string;
+  ip?: string;
 }
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as PostBody;
-    const { id, name, deviceType, userAgent, avatarColor } = body;
+    const { id, name, deviceType, userAgent, avatarColor, ip } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
         deviceType: deviceType ?? undefined,
         userAgent: userAgent ?? undefined,
         avatarColor: avatarColor ?? undefined,
+        ip: ip ?? undefined,
         lastSeen: new Date(),
       },
       create: {
@@ -51,6 +53,7 @@ export async function POST(request: Request) {
         name: name || "Unknown Device",
         deviceType: deviceType || "desktop",
         userAgent: userAgent || "",
+        ip: ip || "",
         avatarColor: avatarColor || "#64748b",
         lastSeen: new Date(),
       },

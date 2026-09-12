@@ -32,7 +32,7 @@ export async function POST(
     });
 
     // Tell the realtime service to disconnect the device immediately.
-    fetch("http://127.0.0.1:3003/internal/kick", {
+    fetch("http://127.0.0.1:3004/internal/kick", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ deviceId: id, reason: "blocked" }),

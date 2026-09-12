@@ -19,7 +19,7 @@ interface RealtimeDevice {
 
 async function fetchLiveDeviceCount(): Promise<number> {
   try {
-    const r = await fetch("http://127.0.0.1:3003/internal/devices", {
+    const r = await fetch("http://127.0.0.1:3004/internal/devices", {
       signal: AbortSignal.timeout(2000),
     });
     if (!r.ok) return 0;
