@@ -17,6 +17,7 @@ model Device {
   name       String
   deviceType String   @default("desktop") // desktop | tablet | mobile
   userAgent  String   @default("")
+  ip         String   @default("")
   avatarColor String  @default("#64748b")
   lastSeen   DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -68,4 +69,31 @@ model FileRecord {
   sender Device @relation("SentFiles", fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([senderId])
+}
+
+// Key-value settings store for the admin panel. Survives restarts.
+// See src/lib/lan/settings.ts DEFAULT_SETTINGS for the canonical key list.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Devices blocked by an admin from rejoining the network.
+model BlockedDevice {
+  id        String   @id @default(cuid())
+  deviceId  String   @unique
+  name      String   @default("")
+  ip        String   @default("")
+  reason    String   @default("")
+  blockedAt DateTime @default(now())
+}
+
+// Audit log of admin actions (used by the "Export logs" feature).
+model AdminLog {
+  id        String   @id @default(cuid())
+  action    String
+  detail    String   @default("")
+  actor     String   @default("admin")
+  timestamp DateTime @default(now())
 }

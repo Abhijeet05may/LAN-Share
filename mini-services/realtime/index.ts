@@ -24,6 +24,7 @@ interface DeviceSession {
   deviceType: string;
   avatarColor?: string;
   userAgent?: string;
+  ip: string;
   joinedAt: number;
 }
 
@@ -34,6 +35,7 @@ interface DevicePublic {
   avatarColor?: string;
   online: boolean;
   socketId: string;
+  ip: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,7 @@ function publicDevice(session: DeviceSession): DevicePublic {
     avatarColor: session.avatarColor,
     online: true,
     socketId: session.socketId,
+    ip: session.ip || "",
   };
 }
 
@@ -116,11 +119,120 @@ async function persistMessage(payload: {
   }
 }
 
+/**
+ * Resolve the client's remote IP. Honors X-Forwarded-For (first IP) when set,
+ * otherwise falls back to socket.handshake.address.
+ */
+function resolveClientIp(socket: Socket): string {
+  const xff = socket.handshake.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.trim().length > 0) {
+    return xff.split(",")[0].trim();
+  }
+  if (Array.isArray(xff) && xff.length > 0) {
+    return String(xff[0]).trim();
+  }
+  return socket.handshake.address || "";
+}
+
+/**
+ * Check whether a device is on the admin's block list.
+ * Fail-open: any network/parsing error returns {blocked:false} so a flaky
+ * Next.js API never locks everyone out of the realtime service.
+ */
+async function isDeviceBlocked(
+  deviceId: string,
+): Promise<{ blocked: boolean; reason?: string }> {
+  try {
+    const res = await fetch("http://localhost:3000/api/blocked-devices");
+    if (!res.ok) return { blocked: false };
+    const data = await res.json();
+    const found = (data.devices || []).find((d: any) => d.deviceId === deviceId);
+    return found
+      ? { blocked: true, reason: found.reason || "blocked" }
+      : { blocked: false };
+  } catch {
+    return { blocked: false };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Server setup
 // ---------------------------------------------------------------------------
 
-const httpServer = createServer();
+const httpServer = createServer(async (req, res) => {
+  // Only handle /internal/* paths. Everything else falls through to socket.io
+  // (socket.io attaches its own request listener to the same server).
+  if (!req.url || !req.url.startsWith("/internal")) {
+    res.statusCode = 404;
+    res.end();
+    return;
+  }
+  // CORS not needed (server-to-server). Parse body for POST.
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  const bodyRaw = Buffer.concat(chunks).toString("utf8");
+  let body: any = {};
+  try {
+    body = bodyRaw ? JSON.parse(bodyRaw) : {};
+  } catch {}
+
+  try {
+    if (req.method === "POST" && req.url === "/internal/kick") {
+      const { deviceId, reason } = body;
+      const sockId = deviceIdToSocket.get(deviceId);
+      if (sockId) {
+        io.to(sockId).emit("device:kicked", { reason: reason || "kicked" });
+        const s = socketToSession.get(sockId);
+        io.except(sockId).emit("device:left", { deviceId });
+        const sock = io.sockets.sockets.get(sockId);
+        if (sock) sock.disconnect(true);
+        socketToSession.delete(sockId);
+        deviceIdToSocket.delete(deviceId);
+        broadcastDeviceList();
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, kicked: true }));
+        log("internal/kick deviceId=" + deviceId);
+      } else {
+        res.statusCode = 200;
+        res.end(
+          JSON.stringify({ ok: true, kicked: false, reason: "not online" }),
+        );
+      }
+      return;
+    }
+    if (req.method === "POST" && req.url === "/internal/broadcast") {
+      const { event, payload } = body;
+      if (event && typeof event === "string") {
+        io.emit(event, payload ?? {});
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true }));
+        log("internal/broadcast event=" + event);
+      } else {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: "event required" }));
+      }
+      return;
+    }
+    if (req.method === "GET" && req.url.startsWith("/internal/devices")) {
+      const devices = Array.from(socketToSession.values()).map((s) => ({
+        deviceId: s.deviceId,
+        name: s.name,
+        deviceType: s.deviceType,
+        ip: s.ip || "",
+        socketId: s.socketId,
+      }));
+      res.setHeader("Content-Type", "application/json");
+      res.statusCode = 200;
+      res.end(JSON.stringify({ devices }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: "not found" }));
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+});
 const io = new Server(httpServer, {
   path: SOCKET_PATH,
   cors: {
@@ -139,7 +251,7 @@ io.on("connection", (socket: Socket) => {
   // -------------------------------------------------------------------------
   // device:join
   // -------------------------------------------------------------------------
-  socket.on("device:join", (payload: any) => {
+  socket.on("device:join", async (payload: any) => {
     try {
       if (!payload || typeof payload !== "object") {
         log("device:join malformed payload (not an object), ignoring");
@@ -152,6 +264,20 @@ io.on("connection", (socket: Socket) => {
         );
         return;
       }
+
+      // Blocked-device check BEFORE registering the session (fail-open).
+      const block = await isDeviceBlocked(deviceId);
+      if (block.blocked) {
+        socket.emit("device:kicked", {
+          reason: "This device has been blocked by the admin",
+        });
+        socket.disconnect(true);
+        log(`device:join rejected (blocked) deviceId=${deviceId}`);
+        return;
+      }
+
+      // Resolve client IP (honor X-Forwarded-For first IP when present).
+      const ip = resolveClientIp(socket);
 
       // Handle reconnect: same deviceId with a new socket.
       const existingSocketId = deviceIdToSocket.get(deviceId);
@@ -169,10 +295,28 @@ io.on("connection", (socket: Socket) => {
         deviceType,
         avatarColor,
         userAgent,
+        ip,
         joinedAt: Date.now(),
       };
       socketToSession.set(socket.id, session);
       deviceIdToSocket.set(deviceId, socket.id);
+
+      // Fire-and-forget: upsert device so IP + lastSeen are recorded in DB.
+      // (The Next.js /api/devices route upserts; IP is authoritative from
+      // realtime's /internal/devices endpoint, but lastSeen is updated here.)
+      fetch("http://localhost:3000/api/devices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: deviceId,
+          name,
+          deviceType,
+          userAgent,
+          avatarColor,
+        }),
+      }).catch((err) =>
+        log(`device upsert error: ${(err as Error)?.message ?? err}`),
+      );
 
       // 1) Emit device:list to the joining socket (full current list).
       socket.emit("device:list", { devices: buildDeviceList() });
@@ -184,7 +328,7 @@ io.on("connection", (socket: Socket) => {
       broadcastDeviceList();
 
       log(
-        `device:join deviceId=${deviceId} name=${name} type=${deviceType} online=${socketToSession.size}`,
+        `device:join deviceId=${deviceId} name=${name} type=${deviceType} ip=${ip} online=${socketToSession.size}`,
       );
     } catch (err) {
       log(`device:join error: ${(err as Error)?.message ?? err}`);

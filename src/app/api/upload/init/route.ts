@@ -3,6 +3,11 @@ import path from "path";
 import crypto from "crypto";
 import fs from "fs/promises";
 import { db } from "@/lib/db";
+import {
+  getAllSettings,
+  toInt,
+  isExtensionAllowed,
+} from "@/lib/lan/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +56,61 @@ export async function POST(request: Request) {
       );
     }
 
+    // --- Settings enforcement ---
+    const s = await getAllSettings();
+
+    // Blocked sender check.
+    const blocked = await db.blockedDevice.findUnique({
+      where: { deviceId: senderId },
+    });
+    if (blocked) {
+      return NextResponse.json(
+        { error: "Device blocked" },
+        { status: 403 }
+      );
+    }
+
+    // Max file size.
+    const maxMB = toInt(s["files.maxSizeMB"], 0);
+    if (maxMB > 0 && Number(fileSize) > maxMB * 1024 * 1024) {
+      return NextResponse.json(
+        { error: `File exceeds max size (${maxMB}MB)` },
+        { status: 413 }
+      );
+    }
+
+    // Extension whitelist/blacklist.
+    const safeOriginal = sanitizeFileName(fileName);
+    const ext = getExtension(safeOriginal);
+    const extCheck = isExtensionAllowed(
+      ext,
+      s["files.extensionMode"],
+      s["files.extensionList"]
+    );
+    if (!extCheck.allowed) {
+      return NextResponse.json(
+        { error: extCheck.reason || "Extension not allowed" },
+        { status: 400 }
+      );
+    }
+
+    // Storage quota.
+    const quotaMB = toInt(s["files.storageQuotaMB"], 0);
+    if (quotaMB > 0) {
+      const quotaBytes = quotaMB * 1024 * 1024;
+      const usageAgg = await db.fileRecord.aggregate({
+        _sum: { size: true },
+      });
+      const used = usageAgg._sum.size || 0;
+      if (used + Number(fileSize) > quotaBytes) {
+        return NextResponse.json(
+          { error: "Storage quota exceeded" },
+          { status: 507 }
+        );
+      }
+    }
+    // --- end enforcement ---
+
     // Ensure sender device exists
     await db.device.upsert({
       where: { id: senderId },
@@ -62,8 +122,6 @@ export async function POST(request: Request) {
       },
     });
 
-    const safeOriginal = sanitizeFileName(fileName);
-    const ext = getExtension(safeOriginal);
     const storedName = `${crypto.randomUUID()}${ext ? "." + ext : ""}`;
     const uploadsDir = path.join(process.cwd(), "uploads");
     const storagePath = path.join(uploadsDir, storedName);
