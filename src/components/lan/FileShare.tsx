@@ -77,6 +77,17 @@ export function FileShare() {
   const removeFile = useLanStore((s) => s.removeFile);
   const publicSettings = useLanStore((s) => s.publicSettings);
 
+  // Per-transfer AbortControllers so the Cancel button can abort an in-flight upload.
+  const abortControllers = useRef<Map<string, AbortController>>(new Map());
+
+  const cancelTransfer = useCallback((transferId: string) => {
+    const ctrl = abortControllers.current.get(transferId);
+    if (ctrl) {
+      ctrl.abort();
+      abortControllers.current.delete(transferId);
+    }
+  }, []);
+
   const [dragOver, setDragOver] = useState(false);
   const [broadcast, setBroadcast] = useState(true);
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
@@ -160,6 +171,10 @@ export function FileShare() {
           startedAt: Date.now(),
         });
 
+        // Create an AbortController for this transfer so the user can cancel.
+        const abortCtrl = new AbortController();
+        abortControllers.current.set(transferId, abortCtrl);
+
         try {
           const result = await chunkedUpload({
             file,
@@ -168,6 +183,7 @@ export function FileShare() {
             recipientIds: broadcast ? [] : selectedRecipients,
             isBroadcast: broadcast,
             recipientLabel,
+            signal: abortCtrl.signal,
             onProgress: (uploaded, total) => {
               updateTransfer(transferId, {
                 uploadedBytes: uploaded,
@@ -199,6 +215,7 @@ export function FileShare() {
         } catch (err) {
           if ((err as Error)?.name === "AbortError") {
             removeTransfer(transferId);
+            toast.info(`Cancelled “${file.name}”`);
             continue;
           }
           updateTransfer(transferId, { status: "error" });
@@ -206,6 +223,8 @@ export function FileShare() {
             description: (err as Error).message,
           });
           setTimeout(() => removeTransfer(transferId), 6000);
+        } finally {
+          abortControllers.current.delete(transferId);
         }
       }
     },
@@ -397,7 +416,7 @@ export function FileShare() {
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <Progress value={pct} className="h-1.5" />
-                          <span className="text-[10px] text-muted-foreground shrink-0">
+                          <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
                             {formatBytes(t.uploadedBytes)} /{" "}
                             {formatBytes(t.totalBytes)}
                           </span>
@@ -406,6 +425,18 @@ export function FileShare() {
                           → {t.recipientLabel}
                         </p>
                       </div>
+                      {t.status === "uploading" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => cancelTransfer(t.id)}
+                          title="Cancel upload"
+                          aria-label="Cancel upload"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );

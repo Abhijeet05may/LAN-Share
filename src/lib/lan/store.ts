@@ -54,6 +54,7 @@ interface LanState {
   privateMessages: Record<string, ChatMessage[]>;
   addMessage: (m: ChatMessage) => void;
   removeMessage: (id: string) => void;
+  updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   setGroupMessages: (m: ChatMessage[]) => void;
   setPrivateMessages: (peerId: string, m: ChatMessage[]) => void;
 
@@ -174,6 +175,18 @@ export const useLanStore = create<LanState>()(
             Object.entries(st.privateMessages).map(([k, msgs]) => [
               k,
               msgs.filter((m) => m.id !== id),
+            ])
+          ),
+        })),
+      updateMessage: (id: string, patch: Partial<ChatMessage>) =>
+        set((st) => ({
+          groupMessages: st.groupMessages.map((m) =>
+            m.id === id ? { ...m, ...patch } : m
+          ),
+          privateMessages: Object.fromEntries(
+            Object.entries(st.privateMessages).map(([k, msgs]) => [
+              k,
+              msgs.map((m) => (m.id === id ? { ...m, ...patch } : m)),
             ])
           ),
         })),

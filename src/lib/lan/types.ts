@@ -21,6 +21,7 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   read?: boolean;
+  edited?: boolean;
 }
 
 export interface FileRecord {

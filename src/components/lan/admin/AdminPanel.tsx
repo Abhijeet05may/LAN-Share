@@ -117,6 +117,30 @@ export function AdminPanel({ onLogout }: AdminPanelProps) {
     void loadSettings();
   }, [loadSettings]);
 
+  // Lightweight live online-device count for the sidebar badge (polls the
+  // admin devices endpoint every 8s — reuses the same auth cookie).
+  const [onlineCount, setOnlineCount] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/admin/devices", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { devices?: { online?: boolean }[] };
+        const n = (data.devices || []).filter((d) => d.online).length;
+        if (!cancelled) setOnlineCount(n);
+      } catch {
+        /* ignore — badge just won't update */
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
   // Push a partial update to the backend then refetch the canonical state.
   const updateSettings = React.useCallback(
     async (partial: Record<string, string>) => {
@@ -330,6 +354,19 @@ export function AdminPanel({ onLogout }: AdminPanelProps) {
                   {t.icon}
                 </span>
                 {t.label}
+                {t.id === "devices" && onlineCount !== null && onlineCount > 0 && (
+                  <span
+                    className={cn(
+                      "ml-auto inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                      activeTab === t.id
+                        ? "bg-brand-foreground/20 text-brand-foreground"
+                        : "bg-[var(--online)]/15 text-[var(--online)]"
+                    )}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--online)] animate-pulse-dot" />
+                    {onlineCount}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -358,6 +395,18 @@ export function AdminPanel({ onLogout }: AdminPanelProps) {
               >
                 {t.icon}
                 {t.label}
+                {t.id === "devices" && onlineCount !== null && onlineCount > 0 && (
+                  <span
+                    className={cn(
+                      "inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums min-w-[16px]",
+                      activeTab === t.id
+                        ? "bg-brand-foreground/20 text-brand-foreground"
+                        : "bg-[var(--online)]/15 text-[var(--online)]"
+                    )}
+                  >
+                    {onlineCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>

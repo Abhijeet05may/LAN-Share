@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Send, Lock, Users, Search, X, ArrowDown, Trash2 } from "lucide-react";
+import { Send, Lock, Users, Search, X, ArrowDown, Trash2, Pencil, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -36,6 +36,7 @@ export function ChatPanel({
   const typing = useLanStore((s) => s.typing);
   const addMessage = useLanStore((s) => s.addMessage);
   const removeMessage = useLanStore((s) => s.removeMessage);
+  const updateMessage = useLanStore((s) => s.updateMessage);
   const clearUnread = useLanStore((s) => s.clearUnread);
   const publicSettings = useLanStore((s) => s.publicSettings);
 
@@ -202,6 +203,39 @@ export function ChatPanel({
     [self, isGroup, conversationId, removeMessage]
   );
 
+  const handleEdit = useCallback(
+    async (id: string, newContent: string) => {
+      if (!self) return;
+      const trimmed = newContent.trim();
+      if (!trimmed) return;
+      // Optimistically update the local store.
+      updateMessage(id, { content: trimmed, edited: true });
+      // Notify peers via socket (fire-and-forget).
+      const socket = lanSocket.get();
+      if (socket?.connected) {
+        socket.emit("chat:edited", {
+          id,
+          senderId: self.deviceId,
+          senderName: self.name,
+          recipientId: isGroup ? null : conversationId,
+          content: trimmed,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      // Persist the edit on the server.
+      try {
+        await fetch(`/api/messages/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ senderId: self.deviceId, content: trimmed }),
+        });
+      } catch {
+        /* non-fatal — the message is already updated locally */
+      }
+    },
+    [self, isGroup, conversationId, updateMessage]
+  );
+
   const handleInput = (value: string) => {
     // Enforce client-side max message length (server also enforces).
     const clamped = maxLen > 0 ? value.slice(0, maxLen) : value;
@@ -298,6 +332,7 @@ export function ChatPanel({
                     showHeader={showHeader}
                     isGroup={isGroup}
                     onDelete={handleDelete}
+                    onEdit={handleEdit}
                   />
                 </div>
               );
@@ -392,14 +427,48 @@ function MessageBubble({
   showHeader,
   isGroup,
   onDelete,
+  onEdit,
 }: {
   msg: ChatMessage;
   mine: boolean;
   showHeader: boolean;
   isGroup: boolean;
   onDelete?: (id: string) => void;
+  onEdit?: (id: string, newContent: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(msg.content);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus + auto-size the textarea when entering edit mode.
+  useEffect(() => {
+    if (editing && editRef.current) {
+      editRef.current.focus();
+      editRef.current.style.height = "auto";
+      editRef.current.style.height = `${editRef.current.scrollHeight}px`;
+    }
+  }, [editing]);
+
+  const startEdit = () => {
+    setDraft(msg.content);
+    setEditing(true);
+    setConfirming(false);
+  };
+
+  const saveEdit = () => {
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== msg.content && onEdit) {
+      onEdit(msg.id, trimmed);
+    }
+    setEditing(false);
+  };
+
+  const cancelEdit = () => {
+    setDraft(msg.content);
+    setEditing(false);
+  };
+
   return (
     <div
       className={cn(
@@ -441,27 +510,83 @@ function MessageBubble({
             <span className="text-[10px] text-muted-foreground">
               {clockTime(msg.timestamp)}
             </span>
+            {msg.edited && (
+              <span className="text-[9px] italic text-muted-foreground/80">
+                edited
+              </span>
+            )}
           </div>
         )}
         <div className={cn("flex items-end gap-1", mine && "flex-row-reverse")}>
-          <div
-            className={cn(
-              "rounded-2xl px-3.5 py-2 text-sm break-words shadow-sm",
-              mine
-                ? "bg-brand text-brand-foreground rounded-br-md"
-                : "bg-card border rounded-bl-md"
-            )}
-          >
-            <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-          </div>
-          {/* Delete action — only for the sender's own messages, revealed on hover */}
-          {mine && onDelete && (
+          {editing ? (
+            <div
+              className={cn(
+                "rounded-2xl px-3 py-2 shadow-sm flex flex-col gap-1.5 min-w-[200px] animate-fade-in",
+                mine
+                  ? "bg-brand text-brand-foreground rounded-br-md"
+                  : "bg-card border rounded-bl-md"
+              )}
+            >
+              <textarea
+                ref={editRef}
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    saveEdit();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelEdit();
+                  }
+                }}
+                className={cn(
+                  "bg-transparent text-sm leading-relaxed resize-none outline-none w-full min-h-[24px]",
+                  mine ? "placeholder:text-brand-foreground/60" : "placeholder:text-muted-foreground"
+                )}
+                rows={1}
+              />
+              <div className={cn("flex items-center justify-end gap-1", mine && "flex-row-reverse")}>
+                <button
+                  onClick={saveEdit}
+                  className="h-6 px-2 rounded-md text-[10px] font-medium bg-brand-foreground/20 hover:bg-brand-foreground/30 transition-colors flex items-center gap-1"
+                  title="Save (Enter)"
+                >
+                  <Check className="h-3 w-3" /> Save
+                </button>
+                <button
+                  onClick={cancelEdit}
+                  className="h-6 w-6 rounded-md hover:bg-brand-foreground/15 transition-colors flex items-center justify-center"
+                  title="Cancel (Esc)"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "rounded-2xl px-3.5 py-2 text-sm break-words shadow-sm",
+                mine
+                  ? "bg-brand text-brand-foreground rounded-br-md"
+                  : "bg-card border rounded-bl-md"
+              )}
+            >
+              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+            </div>
+          )}
+          {/* Edit + Delete actions — only for the sender's own messages, revealed on hover (hidden while editing) */}
+          {mine && !editing && (onDelete || onEdit) && (
             <div className="opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity pb-0.5">
               {confirming ? (
                 <div className="flex items-center gap-0.5 animate-fade-in">
                   <button
                     onClick={() => {
-                      onDelete(msg.id);
+                      onDelete?.(msg.id);
                       setConfirming(false);
                     }}
                     className="h-6 px-2 rounded-md text-[10px] font-medium bg-destructive text-white hover:bg-destructive/90 transition-colors"
@@ -478,14 +603,28 @@ function MessageBubble({
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => setConfirming(true)}
-                  className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-destructive transition-colors flex items-center justify-center"
-                  title="Delete message"
-                  aria-label="Delete message"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-0.5">
+                  {onEdit && (
+                    <button
+                      onClick={startEdit}
+                      className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-brand transition-colors flex items-center justify-center"
+                      title="Edit message"
+                      aria-label="Edit message"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={() => setConfirming(true)}
+                      className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-destructive transition-colors flex items-center justify-center"
+                      title="Delete message"
+                      aria-label="Delete message"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}

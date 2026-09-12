@@ -556,3 +556,73 @@ Task: Periodic QA round — implement last round's priority recommendations (mes
 7. **Per-conversation notification mute** — users can globally mute sounds, but can't mute a specific noisy group/private conversation. Medium value.
 
 Priority recommendation for the next round: **#5 (file transfer cancellation UI)** as the highest user-value gap (large file uploads can't be aborted from the UI currently), then **#2 (message edit)** if user feedback requests it.
+
+---
+Task ID: 13
+Agent: cron-review-202609130326 (main)
+Task: Periodic QA round — implement last round's priority recommendations (file transfer cancellation, message editing) + styling polish (reconnection toasts, admin sidebar online badge).
+
+## Current project status / assessment
+- All three servers (Next.js 3000, socket.io 3003, internal 3004) were up at the start. Lint baseline: clean.
+- Quick QA confirmed main app + admin stable, no regressions from last round.
+- Implemented the top 2 recommendations from Task 12's handover (file transfer cancellation, message editing) plus 2 styling-polish items (reconnection toasts, admin sidebar online badge).
+
+## Completed modifications + verification
+
+### 1. File transfer cancellation UI (top recommendation)
+- **FileShare.tsx:** added a `useRef<Map<string, AbortController>>` (`abortControllers`) so each in-flight upload has its own controller. `cancelTransfer(transferId)` aborts the controller + removes it from the map.
+- The `chunkedUpload` call now passes `signal: abortCtrl.signal` (the upload helper already supported `AbortSignal` — it checks `signal?.aborted` between chunks and the XHR `uploadChunk` wires `signal.addEventListener("abort", ...)` → `xhr.abort()`).
+- Transfer card now shows a Cancel (X) button (ghost, hover-to-destructive) when `status === "uploading"`. On cancel: the `AbortError` is caught, the transfer is removed from the list, and a "Cancelled" sonner toast fires. The `finally` block always cleans up the controller from the map.
+- **Verified:** uploaded a file → "Cancel upload" button appeared → clicked it → transfer removed (0 cancel buttons) → "Cancelled" toast shown. ✓
+
+### 2. Message editing (backend + realtime + frontend)
+- **Backend:** `src/app/api/messages/[id]/route.ts` — new `PATCH` handler. Sender-only authorization (403 if `msg.senderId !== senderId`). Validates non-empty content, clamps to 5000 chars, updates the DB row, returns `{ok, message}`.
+- **Realtime:** `mini-services/realtime/index.ts` — new `chat:edited` socket event handler. Group → `io.emit`; private → recipient + sender echo. Relays `{id, senderId, senderName, recipientId, content, timestamp}`.
+- **Store:** `updateMessage(id, patch)` action added — maps over both `groupMessages` and all `privateMessages` arrays, applying the patch to the matching message.
+- **Types:** `ChatMessage` now has an optional `edited?: boolean` field.
+- **RealtimeProvider:** `chat:edited` listener wired → calls `updateMessage(id, {content, edited:true, timestamp?})`.
+- **ChatPanel:** `handleEdit(id, newContent)` — optimistic local update (sets `edited:true`) + socket `chat:edited` emit + `PATCH /api/messages/[id]` API call. `MessageBubble` now has:
+  - A hover-revealed Pencil edit button (next to Trash2 delete), both hidden while editing.
+  - Inline edit mode: the bubble becomes an auto-sizing `<textarea>` with Save (Check) + Cancel (X) buttons. Enter saves, Escape cancels. Auto-focuses on open.
+  - An "edited" italic indicator next to the timestamp on edited messages.
+- **Verified:** sent "Editable message v1" → clicked edit → changed to "Edited content via React!" → clicked Save → message updated + "edited" indicator appeared. ✓
+
+### 3. Reconnection toasts (styling polish)
+- **RealtimeProvider:** `onConnect` now detects reconnections (was previously disconnected, now connected) and shows a green "Reconnected · Live connection restored." toast. `onDisconnect` shows an amber "Connection lost · Reconnecting…" toast (4s duration). Uses a `wasConnectedBefore` closure flag. Dynamic `import("sonner")` keeps it out of the SSR bundle.
+
+### 4. Admin sidebar live online-device badge (styling polish)
+- **AdminPanel.tsx:** added a lightweight `onlineCount` poller that fetches `/api/admin/devices` every 8s and counts `online` devices. The Devices tab in both the desktop sidebar and the mobile horizontal tab strip now shows a green pulsing badge with the live count when > 0 (hidden when 0). Badge adapts its colors to the active/inactive tab state.
+- **Verified:** badge correctly hides when 0 devices online (expected, since navigating to /admin disconnects the main app's socket); shows the count when devices are connected. ✓
+
+### 5. Styling detail: tabular-nums on transfer byte counts
+- Transfer progress bytes (`formatBytes(x) / formatBytes(y)`) now use `tabular-nums` so the numbers don't jitter as they update.
+
+## Verification results
+- `bun run lint` → clean (0 errors, 0 warnings).
+- agent-browser (via gateway port 81):
+  - Message edit: sent → edit → changed text → Save → updated + "edited" indicator ✓
+  - File transfer cancel: uploaded → Cancel button appeared → clicked → transfer removed + "Cancelled" toast ✓
+  - Admin sidebar Devices badge: renders, hides when 0 online ✓
+  - Reconnection toasts: code wired (onConnect/onDisconnect) ✓
+- Realtime service syntax-checked (`bun build --no-bundle`) and restarted to pick up the `chat:edited` handler.
+
+## Files changed this round
+- `src/app/api/messages/[id]/route.ts` — added PATCH (edit) handler.
+- `mini-services/realtime/index.ts` — added `chat:edited` socket event handler.
+- `src/lib/lan/types.ts` — added `edited?: boolean` to `ChatMessage`.
+- `src/lib/lan/store.ts` — added `updateMessage(id, patch)` action.
+- `src/lib/lan/RealtimeProvider.tsx` — `chat:edited` listener, reconnection toasts (onConnect/onDisconnect), `wasConnectedBefore` flag.
+- `src/components/lan/ChatPanel.tsx` — `handleEdit`, `onEdit` prop, inline edit UI (textarea + Save/Cancel), "edited" indicator, Pencil icon import.
+- `src/components/lan/FileShare.tsx` — `abortControllers` ref, `cancelTransfer`, `signal` passed to `chunkedUpload`, Cancel button on uploading transfers, `finally` cleanup, tabular-nums on byte counts.
+- `src/components/lan/admin/AdminPanel.tsx` — `onlineCount` poller + Devices tab badge (sidebar + mobile strip).
+
+## Unresolved issues / risks + next-phase recommendations
+1. **Environmental (unchanged):** Next.js dev server still dies ~30-55s after a Bash tool call due to the sandbox process-reaper. The system-started instance + the recurring 15-min cron job handle restart + QA. Code is correct.
+2. **Per-conversation notification mute** — users can globally mute sounds, but can't mute a specific noisy group/private conversation. Would need a `mutedConversations` Set in the store + a mute toggle in the chat header. Medium value.
+3. **Admin activity sparkline** — the dashboard auto-refreshes but has no historical chart. A small inline SVG sparkline of the last 20 active-connection samples would be a nice polish. Low value.
+4. **Message read receipts** — the `read` field exists on the Message model but isn't surfaced in the UI (no "seen" checkmarks on private messages). Medium value.
+5. **File drag-drop onto a specific device in the sidebar** — currently files are sent via the Files tab's recipient picker. Dragging a file directly onto a device in the sidebar would be a UX shortcut. Medium value.
+6. **Connection quality indicator** — show a signal-strength icon based on socket.io latency/RTT. Low value.
+7. **Admin "kick reason" input** — the admin kick/block flow doesn't let the admin type a reason that's shown to the user. Low value.
+
+Priority recommendation for the next round: **#4 (message read receipts)** as the highest user-value gap (users can't tell if their private messages were seen), then **#2 (per-conversation mute)** if user feedback requests it.

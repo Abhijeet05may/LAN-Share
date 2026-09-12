@@ -555,6 +555,46 @@ io.on("connection", (socket: Socket) => {
   });
 
   // -------------------------------------------------------------------------
+  // chat:edited  — a sender edited their own message; fan out to peers.
+  // payload: { id, senderId, senderName, recipientId|null, content, timestamp }
+  // -------------------------------------------------------------------------
+  socket.on("chat:edited", (payload: any) => {
+    try {
+      if (!payload || typeof payload !== "object") {
+        log("chat:edited malformed payload (not an object), ignoring");
+        return;
+      }
+      const { id, senderId, senderName, recipientId, content, timestamp } = payload;
+      if (!id || !senderId || typeof content !== "string") {
+        log(`chat:edited missing required fields: ${JSON.stringify(payload)}`);
+        return;
+      }
+      const editedPayload = {
+        id,
+        senderId,
+        senderName: senderName ?? "",
+        recipientId: recipientId ?? null,
+        content,
+        timestamp: timestamp || Date.now(),
+      };
+      if (editedPayload.recipientId == null) {
+        // Group: broadcast to everyone (including sender for confirmation).
+        io.emit("chat:edited", editedPayload);
+      } else {
+        // Private: emit to recipient + echo to sender.
+        const recipientSocketId = deviceIdToSocket.get(editedPayload.recipientId);
+        if (recipientSocketId) {
+          io.to(recipientSocketId).emit("chat:edited", editedPayload);
+        }
+        socket.emit("chat:edited", editedPayload);
+      }
+      log(`chat:edited id=${id} from=${senderId} contentLen=${content.length}`);
+    } catch (err) {
+      log(`chat:edited error: ${(err as Error)?.message ?? err}`);
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // file:sent
   // -------------------------------------------------------------------------
   socket.on("file:sent", (payload: any) => {

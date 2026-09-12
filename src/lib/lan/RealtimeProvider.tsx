@@ -15,6 +15,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const removeDevice = useLanStore((s) => s.removeDevice);
   const addMessage = useLanStore((s) => s.addMessage);
   const removeMessage = useLanStore((s) => s.removeMessage);
+  const updateMessage = useLanStore((s) => s.updateMessage);
   const soundEnabled = useLanStore((s) => s.soundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
@@ -28,9 +29,12 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
 
     const socket = lanSocket.connect();
     const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    let wasConnectedBefore = socket.connected;
 
     const onConnect = () => {
+      const isReconnect = wasConnectedBefore === false && socket.connected;
       setConnected(true);
+      wasConnectedBefore = true;
       socket.emit("device:join", {
         deviceId: self.deviceId,
         name: self.name,
@@ -39,9 +43,24 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         avatarColor: self.avatarColor,
         roomPin: self.roomPin || "",
       });
+      // Brief toast on reconnect so the user knows the live connection dropped + recovered.
+      if (isReconnect) {
+        import("sonner").then(({ toast }) =>
+          toast.success("Reconnected", { description: "Live connection restored." })
+        ).catch(() => {});
+      }
     };
 
-    const onDisconnect = () => setConnected(false);
+    const onDisconnect = () => {
+      setConnected(false);
+      wasConnectedBefore = false;
+      import("sonner").then(({ toast }) =>
+        toast.warning("Connection lost", {
+          description: "Reconnecting…",
+          duration: 4000,
+        })
+      ).catch(() => {});
+    };
 
     const onDeviceList = (data: { devices: Device[] }) => {
       setDevices(data.devices || []);
@@ -78,6 +97,19 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     const onChatDeleted = (data: { id: string; senderId?: string }) => {
       if (!data?.id) return;
       removeMessage(data.id);
+    };
+
+    const onChatEdited = (data: {
+      id: string;
+      content?: string;
+      timestamp?: string | number;
+    }) => {
+      if (!data?.id) return;
+      updateMessage(data.id, {
+        content: data.content,
+        edited: true,
+        ...(data.timestamp ? { timestamp: String(data.timestamp) } : {}),
+      });
     };
 
     const onDeviceKicked = (data: { reason?: string }) => {
@@ -159,6 +191,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     socket.on("chat:message", onChatMessage);
     socket.on("chat:typing", onChatTyping);
     socket.on("chat:deleted", onChatDeleted);
+    socket.on("chat:edited", onChatEdited);
     socket.on("file:sent", onFileSent);
     socket.on("file:downloaded", onFileDownloaded);
 
@@ -182,6 +215,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       socket.off("chat:message", onChatMessage);
       socket.off("chat:typing", onChatTyping);
       socket.off("chat:deleted", onChatDeleted);
+      socket.off("chat:edited", onChatEdited);
       socket.off("file:sent", onFileSent);
       socket.off("file:downloaded", onFileDownloaded);
       typingTimers.forEach((t) => clearTimeout(t));
