@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo } from "react";
-import { Users, MessageCircle, Wifi, WifiOff, Crown, BellOff } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Users, MessageCircle, Wifi, WifiOff, Crown, BellOff, FileUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { DeviceAvatar } from "./DeviceAvatar";
 import { useLanStore } from "@/lib/lan/store";
+import { useFileUpload } from "@/lib/lan/useFileUpload";
 import { clockTime } from "@/lib/lan/device";
+import { toast } from "sonner";
 import type { ConversationId } from "@/lib/lan/types";
 
 interface DeviceListProps {
@@ -25,6 +27,10 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
   const connected = useLanStore((s) => s.connected);
   const clearUnread = useLanStore((s) => s.clearUnread);
   const mutedConversations = useLanStore((s) => s.mutedConversations);
+  const { uploadFiles } = useFileUpload();
+
+  // Which device row is currently being dragged a file over (for highlight).
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   const others = useMemo(
     () =>
@@ -101,7 +107,7 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
 
       <ScrollArea className="flex-1 scrollbar-thin">
         <div className="px-2 py-2 space-y-0.5">
-          {/* Group chat entry */}
+          {/* Group chat entry (also a drop target for "send to everyone") */}
           <ConversationRow
             active={activeConversation === "group"}
             onClick={() => openConversation("group")}
@@ -111,6 +117,29 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
             unread={groupUnread}
             muted={mutedConversations.includes("group")}
             accent
+            draggable
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              if (dropTargetId !== "group") setDropTargetId("group");
+            }}
+            onDragLeave={() => {
+              if (dropTargetId === "group") setDropTargetId(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDropTargetId(null);
+              const files = e.dataTransfer.files;
+              if (files && files.length > 0) {
+                toast.success("Sending to everyone…");
+                void uploadFiles(files, {
+                  recipientIds: [],
+                  isBroadcast: true,
+                  recipientLabel: "Everyone",
+                });
+              }
+            }}
+            dropActive={dropTargetId === "group"}
           />
 
           <div className="px-2 pt-3 pb-1 flex items-center justify-between">
@@ -158,6 +187,29 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
                   }
                   unread={convUnread}
                   muted={mutedConversations.includes(d.deviceId)}
+                  draggable
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    if (dropTargetId !== d.deviceId) setDropTargetId(d.deviceId);
+                  }}
+                  onDragLeave={() => {
+                    if (dropTargetId === d.deviceId) setDropTargetId(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDropTargetId(null);
+                    const files = e.dataTransfer.files;
+                    if (files && files.length > 0) {
+                      toast.success(`Sending to ${d.name}…`);
+                      void uploadFiles(files, {
+                        recipientIds: [d.deviceId],
+                        isBroadcast: false,
+                        recipientLabel: d.name,
+                      });
+                    }
+                  }}
+                  dropActive={dropTargetId === d.deviceId}
                 />
               );
             })
@@ -178,6 +230,11 @@ function ConversationRow({
   unread,
   muted,
   accent,
+  draggable,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  dropActive,
 }: {
   active: boolean;
   onClick: () => void;
@@ -188,15 +245,26 @@ function ConversationRow({
   unread?: number;
   muted?: boolean;
   accent?: boolean;
+  draggable?: boolean;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  dropActive?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      draggable={draggable}
       className={cn(
-        "w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors group",
+        "w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors group relative",
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "hover:bg-sidebar-accent/60"
+          : "hover:bg-sidebar-accent/60",
+        dropActive &&
+          "ring-2 ring-brand bg-brand/10 outline-none"
       )}
     >
       {avatar ? (
@@ -221,13 +289,24 @@ function ConversationRow({
               <BellOff className="h-3 w-3 text-muted-foreground/70 shrink-0" />
             )}
           </span>
-          {unread ? (
-            <Badge className="bg-brand text-brand-foreground h-5 min-w-5 px-1.5 text-[11px] flex items-center justify-center">
+          {dropActive ? (
+            <FileUp className="h-4 w-4 text-brand shrink-0 animate-fade-in" />
+          ) : unread ? (
+            <Badge
+              className={cn(
+                "h-5 min-w-5 px-1.5 text-[11px] flex items-center justify-center",
+                muted
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-brand text-brand-foreground"
+              )}
+            >
               {unread > 99 ? "99+" : unread}
             </Badge>
           ) : null}
         </div>
-        <p className="text-[11px] text-muted-foreground truncate">{subtitle}</p>
+        <p className="text-[11px] text-muted-foreground truncate">
+          {dropActive ? "Drop to send file" : subtitle}
+        </p>
       </div>
     </button>
   );

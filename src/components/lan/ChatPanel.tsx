@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DeviceAvatar } from "./DeviceAvatar";
+import { EmojiPicker } from "@/components/lan/EmojiPicker";
 import { useLanStore } from "@/lib/lan/store";
 import { lanSocket } from "@/lib/lan/socketManager";
 import { clockTime, initialsOf } from "@/lib/lan/device";
@@ -48,6 +49,7 @@ export function ChatPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [showJump, setShowJump] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastTypingSent = useRef(0);
   const loadedRef = useRef(false);
 
@@ -132,6 +134,29 @@ export function ChatPanel({
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
   }, []);
+
+  // Insert an emoji at the textarea cursor position.
+  const insertEmoji = useCallback(
+    (emoji: string) => {
+      const ta = textareaRef.current;
+      if (!ta) {
+        setInput((prev) => prev + emoji);
+        return;
+      }
+      const start = ta.selectionStart ?? input.length;
+      const end = ta.selectionEnd ?? input.length;
+      const next = input.slice(0, start) + emoji + input.slice(end);
+      const clamped = maxLen > 0 ? next.slice(0, maxLen) : next;
+      setInput(clamped);
+      // Restore cursor just after the inserted emoji (after re-render).
+      requestAnimationFrame(() => {
+        const pos = start + emoji.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+      });
+    },
+    [input, maxLen]
+  );
 
   // Clear unread when viewing.
   useEffect(() => {
@@ -426,8 +451,10 @@ export function ChatPanel({
               <Bell className="h-4 w-4" />
             )}
           </Button>
+          <EmojiPicker onPick={insertEmoji} />
           <div className="flex-1 relative">
             <Textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => handleInput(e.target.value)}
               onKeyDown={(e) => {

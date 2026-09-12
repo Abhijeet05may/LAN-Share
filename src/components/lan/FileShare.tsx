@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Upload,
   File as FileIcon,
@@ -41,7 +41,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useLanStore } from "@/lib/lan/store";
 import { lanSocket } from "@/lib/lan/socketManager";
-import { chunkedUpload, downloadFile } from "@/lib/lan/upload";
+import { downloadFile } from "@/lib/lan/upload";
+import { useFileUpload } from "@/lib/lan/useFileUpload";
 import {
   fileKind,
   formatBytes,
@@ -69,35 +70,41 @@ export function FileShare() {
   const devices = useLanStore((s) => s.devices);
   const files = useLanStore((s) => s.files);
   const setFiles = useLanStore((s) => s.setFiles);
-  const addFile = useLanStore((s) => s.addFile);
   const transfers = useLanStore((s) => s.transfers);
-  const addTransfer = useLanStore((s) => s.addTransfer);
-  const updateTransfer = useLanStore((s) => s.updateTransfer);
-  const removeTransfer = useLanStore((s) => s.removeTransfer);
   const removeFile = useLanStore((s) => s.removeFile);
   const publicSettings = useLanStore((s) => s.publicSettings);
 
-  // Per-transfer AbortControllers so the Cancel button can abort an in-flight upload.
-  const abortControllers = useRef<Map<string, AbortController>>(new Map());
-
-  const cancelTransfer = useCallback((transferId: string) => {
-    const ctrl = abortControllers.current.get(transferId);
-    if (ctrl) {
-      ctrl.abort();
-      abortControllers.current.delete(transferId);
-    }
-  }, []);
+  // Shared upload logic (also used by the sidebar drag-drop shortcut).
+  const { uploadFiles, cancelTransfer } = useFileUpload();
 
   const [dragOver, setDragOver] = useState(false);
   const [broadcast, setBroadcast] = useState(true);
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null);
+  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "doc" | "video" | "other">("all");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const previewEnabled = publicSettings.filePreviewEnabled;
-  const maxFileBytes = publicSettings.maxFileBytes;
 
   const others = devices.filter((d) => d.deviceId !== self?.deviceId);
+
+  // Filter file history by type.
+  const filteredFiles = useMemo(() => {
+    if (typeFilter === "all") return files;
+    return files.filter((f) => {
+      const mime = f.mimeType || "";
+      const ext = (f.extension || "").toLowerCase();
+      if (typeFilter === "image") return /^image\//.test(mime);
+      if (typeFilter === "video") return /^video\//.test(mime);
+      if (typeFilter === "doc")
+        return (
+          mime === "application/pdf" ||
+          ["doc", "docx", "txt", "md", "pdf", "rtf"].includes(ext)
+        );
+      // other = not image/video/doc
+      return !/^image\//.test(mime) && !/^video\//.test(mime) && mime !== "application/pdf";
+    });
+  }, [files, typeFilter]);
 
   // Load file history.
   const refreshFiles = useCallback(async () => {
@@ -119,7 +126,7 @@ export function FileShare() {
     refreshFiles();
   }, [refreshFiles]);
 
-  // Handle selected files.
+  // Handle selected files via the shared upload hook.
   const handleFiles = useCallback(
     async (fileList: FileList | File[]) => {
       if (!self) return;
@@ -131,104 +138,19 @@ export function FileShare() {
         return;
       }
 
-      // Client-side max-file-size guard (server also enforces). Reject before
-      // starting any chunk uploads so we don't waste bandwidth.
-      if (maxFileBytes > 0) {
-        const tooBig = arr.filter((f) => f.size > maxFileBytes);
-        if (tooBig.length) {
-          toast.error(`${tooBig.length} file(s) exceed the size limit`, {
-            description: `Max ${formatBytes(maxFileBytes)} · ${tooBig
-              .map((f) => f.name)
-              .slice(0, 3)
-              .join(", ")}`,
-          });
-        }
-      }
+      const recipientLabel = broadcast
+        ? "Everyone"
+        : selectedRecipients
+            .map((id) => devices.find((d) => d.deviceId === id)?.name || "device")
+            .join(", ");
 
-      for (const file of arr) {
-        // Skip files that exceed the client-side size limit.
-        if (maxFileBytes > 0 && file.size > maxFileBytes) {
-          continue;
-        }
-        const transferId = `t_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 6)}`;
-        const recipientLabel = broadcast
-          ? "Everyone"
-          : selectedRecipients
-              .map((id) => devices.find((d) => d.deviceId === id)?.name || "device")
-              .join(", ");
-        addTransfer({
-          id: transferId,
-          fileName: file.name,
-          fileSize: file.size,
-          mimeType: file.type,
-          senderName: self.name,
-          uploadedBytes: 0,
-          totalBytes: file.size,
-          status: "uploading",
-          recipientLabel,
-          startedAt: Date.now(),
-        });
-
-        // Create an AbortController for this transfer so the user can cancel.
-        const abortCtrl = new AbortController();
-        abortControllers.current.set(transferId, abortCtrl);
-
-        try {
-          const result = await chunkedUpload({
-            file,
-            senderId: self.deviceId,
-            senderName: self.name,
-            recipientIds: broadcast ? [] : selectedRecipients,
-            isBroadcast: broadcast,
-            recipientLabel,
-            signal: abortCtrl.signal,
-            onProgress: (uploaded, total) => {
-              updateTransfer(transferId, {
-                uploadedBytes: uploaded,
-                totalBytes: total,
-              });
-            },
-          });
-          // Fetch the completed file record and notify via socket.
-          const fRes = await fetch(`/api/files/${result.fileId}`);
-          if (fRes.ok) {
-            const fData = await fRes.json();
-            const fileRecord: FileRecord = fData.file;
-            addFile(fileRecord);
-            const socket = lanSocket.get();
-            if (socket?.connected) {
-              socket.emit("file:sent", {
-                file: fileRecord,
-                senderId: self.deviceId,
-                senderName: self.name,
-              });
-            }
-          }
-          updateTransfer(transferId, { status: "completed" });
-          toast.success(`Sent “${result.fileName}”`, {
-            description: `To ${recipientLabel} · ${formatBytes(result.fileSize)}`,
-          });
-          // Auto-clear completed transfer after a delay.
-          setTimeout(() => removeTransfer(transferId), 4000);
-        } catch (err) {
-          if ((err as Error)?.name === "AbortError") {
-            removeTransfer(transferId);
-            toast.info(`Cancelled “${file.name}”`);
-            continue;
-          }
-          updateTransfer(transferId, { status: "error" });
-          toast.error(`Failed to send “${file.name}”`, {
-            description: (err as Error).message,
-          });
-          setTimeout(() => removeTransfer(transferId), 6000);
-        } finally {
-          abortControllers.current.delete(transferId);
-        }
-      }
+      await uploadFiles(fileList, {
+        recipientIds: broadcast ? [] : selectedRecipients,
+        isBroadcast: broadcast,
+        recipientLabel,
+      });
     },
-    [self, broadcast, selectedRecipients, others.length, devices, addTransfer, updateTransfer, addFile, removeTransfer, maxFileBytes]
+    [self, broadcast, selectedRecipients, others.length, devices, uploadFiles]
   );
 
   const onDrop = (e: React.DragEvent) => {
@@ -459,6 +381,30 @@ export function FileShare() {
                 Refresh
               </Button>
             </div>
+            {files.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap px-1">
+                {([
+                  ["all", "All"],
+                  ["image", "Images"],
+                  ["doc", "Docs"],
+                  ["video", "Videos"],
+                  ["other", "Other"],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setTypeFilter(key)}
+                    className={cn(
+                      "h-7 px-2.5 rounded-full text-[11px] font-medium border transition-colors",
+                      typeFilter === key
+                        ? "bg-brand text-brand-foreground border-brand"
+                        : "bg-background text-muted-foreground hover:bg-muted border-border"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             {files.length === 0 ? (
               <div className="rounded-xl border border-dashed py-12 text-center">
                 <FileIcon className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
@@ -467,9 +413,16 @@ export function FileShare() {
                   Shared files will appear here for re-download.
                 </p>
               </div>
+            ) : filteredFiles.length === 0 ? (
+              <div className="rounded-xl border border-dashed py-10 text-center">
+                <p className="text-sm font-medium">No files match this filter</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Try a different category.
+                </p>
+              </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {files.map((f) => (
+                {filteredFiles.map((f) => (
                   <FileCard
                     key={f.id}
                     file={f}
