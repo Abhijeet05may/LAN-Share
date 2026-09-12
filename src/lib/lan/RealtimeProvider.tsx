@@ -130,6 +130,15 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       updateMessage(data.id, { read: true });
     };
 
+    // A device reacted to a message → update the reactions array.
+    const onChatReact = (data: {
+      messageId: string;
+      reactions?: { id: string; deviceId: string; deviceName?: string; emoji: string }[];
+    }) => {
+      if (!data?.messageId) return;
+      updateMessage(data.messageId, { reactions: data.reactions || [] });
+    };
+
     const onDeviceKicked = (data: { reason?: string }) => {
       // The admin kicked/blocked this device, or the PIN was rejected.
       // Surface the reason and sign the user out so they can re-onboard.
@@ -211,6 +220,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     socket.on("chat:deleted", onChatDeleted);
     socket.on("chat:edited", onChatEdited);
     socket.on("chat:read-receipt", onChatReadReceipt);
+    socket.on("chat:react", onChatReact);
     socket.on("file:sent", onFileSent);
     socket.on("file:downloaded", onFileDownloaded);
 
@@ -236,6 +246,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       socket.off("chat:deleted", onChatDeleted);
       socket.off("chat:edited", onChatEdited);
       socket.off("chat:read-receipt", onChatReadReceipt);
+      socket.off("chat:react", onChatReact);
       socket.off("file:sent", onFileSent);
       socket.off("file:downloaded", onFileDownloaded);
       typingTimers.forEach((t) => clearTimeout(t));

@@ -162,6 +162,11 @@ export async function GET(request: Request) {
         },
         orderBy: { timestamp: "desc" },
         take: 200,
+        include: {
+          reactions: {
+            select: { id: true, deviceId: true, deviceName: true, emoji: true },
+          },
+        },
       });
       // Reverse so oldest is first
       messages.reverse();
@@ -173,6 +178,11 @@ export async function GET(request: Request) {
       where: { recipientId: null },
       orderBy: { timestamp: "desc" },
       take: 200,
+      include: {
+        reactions: {
+          select: { id: true, deviceId: true, deviceName: true, emoji: true },
+        },
+      },
     });
     messages.reverse();
     return NextResponse.json({ messages });

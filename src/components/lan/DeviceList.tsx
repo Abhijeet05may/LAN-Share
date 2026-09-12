@@ -27,6 +27,7 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
   const connected = useLanStore((s) => s.connected);
   const clearUnread = useLanStore((s) => s.clearUnread);
   const mutedConversations = useLanStore((s) => s.mutedConversations);
+  const typing = useLanStore((s) => s.typing);
   const pinnedConversations = useLanStore((s) => s.pinnedConversations);
   const toggleConversationPinned = useLanStore((s) => s.toggleConversationPinned);
   const { uploadFiles } = useFileUpload();
@@ -190,12 +191,15 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
                   }
                   title={d.name}
                   subtitle={
-                    d.online
+                    typing[d.deviceId]?.length
+                      ? "typing…"
+                      : d.online
                       ? `Online · ${d.deviceType}`
                       : d.lastSeen
                       ? `Last seen ${clockTime(d.lastSeen)}`
                       : "Offline"
                   }
+                  typing={!!typing[d.deviceId]?.length}
                   unread={convUnread}
                   muted={mutedConversations.includes(d.deviceId)}
                   draggable
@@ -250,6 +254,7 @@ function ConversationRow({
   dropActive,
   pinned,
   onTogglePin,
+  typing,
 }: {
   active: boolean;
   onClick: () => void;
@@ -259,6 +264,7 @@ function ConversationRow({
   subtitle: string;
   unread?: number;
   muted?: boolean;
+  typing?: boolean;
   accent?: boolean;
   draggable?: boolean;
   onDragOver?: (e: React.DragEvent) => void;
@@ -321,8 +327,22 @@ function ConversationRow({
             </Badge>
           ) : null}
         </div>
-        <p className="text-[11px] text-muted-foreground truncate">
-          {dropActive ? "Drop to send file" : subtitle}
+        <p
+          className={cn(
+            "text-[11px] truncate flex items-center gap-1",
+            typing ? "text-brand font-medium" : "text-muted-foreground"
+          )}
+        >
+          {dropActive ? "Drop to send file" : typing ? (
+            <>
+              <span className="inline-flex gap-0.5">
+                <span className="h-1 w-1 rounded-full bg-brand animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="h-1 w-1 rounded-full bg-brand animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="h-1 w-1 rounded-full bg-brand animate-bounce" style={{ animationDelay: "300ms" }} />
+              </span>
+              {subtitle}
+            </>
+          ) : subtitle}
         </p>
       </div>
       {/* Pin toggle — always visible when pinned, hover-revealed otherwise */}

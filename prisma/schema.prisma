@@ -40,9 +40,25 @@ model Message {
 
   sender    Device   @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
   recipient Device?  @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+  reactions Reaction[]
 
   @@index([recipientId])
   @@index([senderId])
+}
+
+// Emoji reactions on messages. One reaction per device per emoji per message.
+model Reaction {
+  id        String   @id @default(cuid())
+  messageId String
+  deviceId  String
+  deviceName String  @default("")
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, deviceId, emoji])
+  @@index([messageId])
 }
 
 // Metadata for an uploaded file. The actual bytes live in /uploads.

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Send, Lock, Users, Search, X, ArrowDown, Trash2, Pencil, Check, CheckCheck, Bell, BellOff } from "lucide-react";
+import { Send, Lock, Users, Search, X, ArrowDown, Trash2, Pencil, Check, CheckCheck, Bell, BellOff, Smile } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -332,6 +332,67 @@ export function ChatPanel({
     [self, isGroup, conversationId, updateMessage]
   );
 
+  // Toggle an emoji reaction on a message.
+  const handleReact = useCallback(
+    async (messageId: string, emoji: string) => {
+      if (!self) return;
+      // Notify peers via socket (fire-and-forget).
+      const socket = lanSocket.get();
+      // Find the current reactions to determine the action (add/remove).
+      const msg = messages.find((m) => m.id === messageId);
+      const existing = msg?.reactions?.find(
+        (r) => r.deviceId === self.deviceId && r.emoji === emoji
+      );
+      const action = existing ? "removed" : "added";
+      // Optimistically update the local reactions.
+      if (msg) {
+        let nextReactions;
+        if (existing) {
+          nextReactions = (msg.reactions || []).filter(
+            (r) => !(r.deviceId === self.deviceId && r.emoji === emoji)
+          );
+        } else {
+          nextReactions = [
+            ...(msg.reactions || []),
+            { id: `r_${Date.now()}`, deviceId: self.deviceId, deviceName: self.name, emoji },
+          ];
+        }
+        updateMessage(messageId, { reactions: nextReactions });
+      }
+      if (socket?.connected) {
+        socket.emit("chat:react", {
+          messageId,
+          deviceId: self.deviceId,
+          deviceName: self.name,
+          emoji,
+          action,
+          reactions: msg?.reactions || [],
+        });
+      }
+      // Persist on the server + refetch the canonical reaction list.
+      try {
+        const res = await fetch(`/api/messages/${messageId}/react`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deviceId: self.deviceId,
+            deviceName: self.name,
+            emoji,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.reactions) {
+            updateMessage(messageId, { reactions: data.reactions });
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [self, messages, updateMessage]
+  );
+
   const handleInput = (value: string) => {
     // Enforce client-side max message length (server also enforces).
     const clamped = maxLen > 0 ? value.slice(0, maxLen) : value;
@@ -438,6 +499,8 @@ export function ChatPanel({
                     isGroup={isGroup}
                     onDelete={handleDelete}
                     onEdit={handleEdit}
+                    onReact={handleReact}
+                    selfDeviceId={self?.deviceId}
                   />
                 </div>
               );
@@ -549,6 +612,8 @@ function MessageBubble({
   isGroup,
   onDelete,
   onEdit,
+  onReact,
+  selfDeviceId,
 }: {
   msg: ChatMessage;
   mine: boolean;
@@ -556,12 +621,18 @@ function MessageBubble({
   isGroup: boolean;
   onDelete?: (id: string) => void;
   onEdit?: (id: string, newContent: string) => void;
+  onReact?: (id: string, emoji: string) => void;
+  selfDeviceId?: string;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [showReactBar, setShowReactBar] = useState(false);
   const [draft, setDraft] = useState(msg.content);
   const editRef = useRef<HTMLTextAreaElement>(null);
+  const reactRef = useRef<HTMLDivElement>(null);
 
+  // Quick-reaction emojis (the 6 most common).
+  const QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "👀", "🙏"];
   // Focus + auto-size the textarea when entering edit mode.
   useEffect(() => {
     if (editing && editRef.current) {
@@ -707,11 +778,58 @@ function MessageBubble({
                   seen
                 </span>
               )}
+              {/* Reaction chips */}
+              {msg.reactions && msg.reactions.length > 0 && (
+                <div className={cn("flex flex-wrap gap-1", mine ? "justify-end" : "justify-start")}>
+                  {Object.entries(
+                    msg.reactions.reduce<Record<string, { emoji: string; count: number; mine: boolean }>>((acc, r) => {
+                      const key = r.emoji;
+                      if (!acc[key]) acc[key] = { emoji: r.emoji, count: 0, mine: false };
+                      acc[key].count++;
+                      if (r.deviceId === selfDeviceId) acc[key].mine = true;
+                      return acc;
+                    }, {})
+                  ).map(([key, info]) => (
+                    <button
+                      key={key}
+                      onClick={() => onReact?.(msg.id, info.emoji)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium border transition-colors animate-fade-in",
+                        info.mine
+                          ? "bg-brand/15 border-brand text-brand"
+                          : "bg-muted/60 border-border text-muted-foreground hover:bg-muted"
+                      )}
+                      title={info.mine ? "Click to remove your reaction" : "React"}
+                    >
+                      <span className="text-sm leading-none">{info.emoji}</span>
+                      <span className="tabular-nums">{info.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-          {/* Edit + Delete actions — only for the sender's own messages, revealed on hover (hidden while editing) */}
-          {mine && !editing && (onDelete || onEdit) && (
-            <div className="opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity pb-0.5">
+          {/* Reaction quick-bar (popover) */}
+          {showReactBar && onReact && (
+            <div className="absolute -top-10 right-0 z-20 flex items-center gap-0.5 rounded-full border bg-popover shadow-lg px-1 py-1 animate-fade-in">
+              {QUICK_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    onReact(msg.id, emoji);
+                    setShowReactBar(false);
+                  }}
+                  className="h-7 w-7 rounded-full hover:bg-muted hover:scale-125 transition-all flex items-center justify-center text-base leading-none"
+                  title={`React ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Hover actions — react for all; edit/delete for own messages only */}
+          {!editing && (onDelete || onEdit || onReact) && (
+            <div className="opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity pb-0.5 relative">
               {confirming ? (
                 <div className="flex items-center gap-0.5 animate-fade-in">
                   <button
@@ -734,7 +852,17 @@ function MessageBubble({
                 </div>
               ) : (
                 <div className="flex items-center gap-0.5">
-                  {onEdit && (
+                  {onReact && (
+                    <button
+                      onClick={() => setShowReactBar((v) => !v)}
+                      className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-brand transition-colors flex items-center justify-center"
+                      title="React"
+                      aria-label="Add reaction"
+                    >
+                      <Smile className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {mine && onEdit && (
                     <button
                       onClick={startEdit}
                       className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-brand transition-colors flex items-center justify-center"
@@ -744,7 +872,7 @@ function MessageBubble({
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                   )}
-                  {onDelete && (
+                  {mine && onDelete && (
                     <button
                       onClick={() => setConfirming(true)}
                       className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-destructive transition-colors flex items-center justify-center"

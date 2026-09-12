@@ -622,6 +622,37 @@ io.on("connection", (socket: Socket) => {
   });
 
   // -------------------------------------------------------------------------
+  // chat:react  — a device reacted to a message (add/remove emoji); fan out.
+  // payload: { messageId, deviceId, deviceName, emoji, action, reactions }
+  // -------------------------------------------------------------------------
+  socket.on("chat:react", (payload: any) => {
+    try {
+      if (!payload || typeof payload !== "object") {
+        log("chat:react malformed payload (not an object), ignoring");
+        return;
+      }
+      const { messageId, deviceId, emoji, action, reactions } = payload;
+      if (!messageId || !deviceId || !emoji) {
+        log(`chat:react missing required fields: ${JSON.stringify(payload)}`);
+        return;
+      }
+      const reactPayload = {
+        messageId,
+        deviceId,
+        deviceName: payload.deviceName ?? "",
+        emoji,
+        action: action ?? "added",
+        reactions: reactions || [],
+      };
+      // Broadcast to everyone (including sender for confirmation).
+      io.emit("chat:react", reactPayload);
+      log(`chat:react msg=${messageId} device=${deviceId} emoji=${emoji} action=${action}`);
+    } catch (err) {
+      log(`chat:react error: ${(err as Error)?.message ?? err}`);
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // file:sent
   // -------------------------------------------------------------------------
   socket.on("file:sent", (payload: any) => {

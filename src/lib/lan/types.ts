@@ -13,6 +13,13 @@ export interface Device {
   lastSeen?: string;
 }
 
+export interface Reaction {
+  id: string;
+  deviceId: string;
+  deviceName?: string;
+  emoji: string;
+}
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -22,6 +29,7 @@ export interface ChatMessage {
   timestamp: string;
   read?: boolean;
   edited?: boolean;
+  reactions?: Reaction[];
 }
 
 export interface FileRecord {
