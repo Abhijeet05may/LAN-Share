@@ -1,0 +1,71 @@
+// Prisma schema for LAN File Share + Chat App
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A device that has connected to the LAN share session.
+// deviceId is a client-generated stable id (stored in localStorage) so a
+// returning device keeps its identity across refreshes.
+model Device {
+  id         String   @id // client-generated stable deviceId (cuid)
+  name       String
+  deviceType String   @default("desktop") // desktop | tablet | mobile
+  userAgent  String   @default("")
+  avatarColor String  @default("#64748b")
+  lastSeen   DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  sentMessages     Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
+  sentFiles        FileRecord[] @relation("SentFiles")
+}
+
+// Chat messages. recipientId null  => group chat.
+// recipientId set   => private 1-to-1 chat with that device.
+model Message {
+  id          String   @id @default(cuid())
+  senderId    String
+  senderName  String
+  recipientId String?  // null = group message
+  content     String
+  timestamp   DateTime @default(now())
+  read        Boolean  @default(false)
+
+  sender    Device   @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient Device?  @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId])
+  @@index([senderId])
+}
+
+// Metadata for an uploaded file. The actual bytes live in /uploads.
+model FileRecord {
+  id           String   @id @default(cuid())
+  name         String   // stored filename on disk
+  originalName String   // original filename from uploader
+  size         Int      @default(0)
+  mimeType     String   @default("application/octet-stream")
+  extension    String   @default("")
+  senderId     String
+  senderName   String
+  // Comma-separated recipient deviceIds. Empty string => broadcast to everyone.
+  recipientIds String   @default("")
+  isBroadcast  Boolean  @default(true)
+  storagePath  String
+  status       String   @default("ready") // uploading | ready | expired | deleted
+  totalChunks  Int      @default(0)
+  receivedChunks Int    @default(0)
+  expiresAt    DateTime?
+  downloadCount Int     @default(0)
+  createdAt    DateTime @default(now())
+
+  sender Device @relation("SentFiles", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([senderId])
+}
