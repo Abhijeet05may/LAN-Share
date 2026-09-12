@@ -89,6 +89,7 @@ export function DevicesSection() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
+  const [onlineOnly, setOnlineOnly] = React.useState(false);
 
   // Dialog states
   const [renameTarget, setRenameTarget] = React.useState<AdminDevice | null>(null);
@@ -102,7 +103,6 @@ export function DevicesSection() {
   const [blocking, setBlocking] = React.useState(false);
 
   const load = React.useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/admin/devices", { cache: "no-store" });
@@ -120,6 +120,14 @@ export function DevicesSection() {
 
   React.useEffect(() => {
     void load();
+  }, [load]);
+
+  // Auto-refresh every 8 seconds so online status stays current.
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      void load();
+    }, 8000);
+    return () => clearInterval(id);
   }, [load]);
 
   const openRename = (d: AdminDevice) => {
@@ -234,14 +242,16 @@ export function DevicesSection() {
   const filtered = React.useMemo(() => {
     if (!devices) return [];
     const q = query.trim().toLowerCase();
-    if (!q) return devices;
-    return devices.filter(
+    let list = devices;
+    if (onlineOnly) list = list.filter((d) => d.online);
+    if (!q) return list;
+    return list.filter(
       (d) =>
         d.name.toLowerCase().includes(q) ||
         d.id.toLowerCase().includes(q) ||
         (d.ip || "").toLowerCase().includes(q)
     );
-  }, [devices, query]);
+  }, [devices, query, onlineOnly]);
 
   const onlineCount = devices?.filter((d) => d.online).length ?? 0;
 
@@ -277,6 +287,21 @@ export function DevicesSection() {
               className="h-9 pl-8 w-44 sm:w-56"
             />
           </div>
+          <Button
+            variant={onlineOnly ? "default" : "outline"}
+            size="sm"
+            onClick={() => setOnlineOnly((v) => !v)}
+            className="h-9"
+            title="Toggle online-only filter"
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                onlineOnly ? "bg-background" : "bg-[var(--online)] animate-pulse-dot"
+              )}
+            />
+            <span className="hidden sm:inline">Online</span>
+          </Button>
           <Button
             variant="outline"
             size="sm"

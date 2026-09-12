@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, Shuffle, Wifi, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight, Shuffle, Wifi, ShieldCheck, Zap, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DeviceAvatar } from "./DeviceAvatar";
@@ -13,15 +13,34 @@ import {
   getOrCreateDeviceId,
 } from "@/lib/lan/device";
 import { toast } from "sonner";
+import type { PublicSettings } from "@/lib/lan/types";
+import { DEFAULT_PUBLIC_SETTINGS } from "@/lib/lan/types";
 
 export function Onboarding() {
   const completeOnboarding = useLanStore((s) => s.completeOnboarding);
   const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const [pub, setPub] = useState<PublicSettings>(DEFAULT_PUBLIC_SETTINGS);
   const [deviceType] = useState<ReturnType<typeof detectDeviceType>>(() =>
     detectDeviceType(
       typeof navigator !== "undefined" ? navigator.userAgent : ""
     )
   );
+
+  // Fetch public settings so we know whether a PIN is required + the app name.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/settings/public", { cache: "no-store" });
+        if (res.ok) {
+          const data = (await res.json()) as { settings: PublicSettings };
+          if (data.settings) setPub(data.settings);
+        }
+      } catch {
+        /* ignore — fall back to defaults */
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     setName(generateDefaultName(deviceType));
@@ -29,11 +48,16 @@ export function Onboarding() {
 
   const deviceId = typeof window !== "undefined" ? getOrCreateDeviceId() : "";
   const avatarColor = colorForSeed(deviceId || name || "anon");
+  const pinRequired = pub.pinEnabled;
 
   const handleJoin = () => {
     const trimmed = name.trim();
     if (!trimmed) {
       toast.error("Please enter a display name");
+      return;
+    }
+    if (pinRequired && !pin.trim()) {
+      toast.error("A room PIN is required to join this network");
       return;
     }
     completeOnboarding({
@@ -42,6 +66,7 @@ export function Onboarding() {
       deviceType,
       avatarColor,
       onboarded: true,
+      roomPin: pinRequired ? pin.trim() : undefined,
     });
     toast.success(`Welcome, ${trimmed}!`);
   };
@@ -56,7 +81,7 @@ export function Onboarding() {
               <Wifi className="h-6 w-6" />
             </div>
             <div className="text-left">
-              <h1 className="text-xl font-bold tracking-tight">LAN Share</h1>
+              <h1 className="text-xl font-bold tracking-tight">{pub.appName}</h1>
               <p className="text-xs text-muted-foreground -mt-0.5">
                 Files & chat for your network
               </p>
@@ -115,6 +140,30 @@ export function Onboarding() {
                 </Button>
               </div>
             </div>
+
+            {/* Room PIN (conditional on admin setting) */}
+            {pinRequired && (
+              <div className="space-y-2 animate-slide-up">
+                <label htmlFor="pin" className="text-sm font-medium flex items-center gap-1.5">
+                  <KeyRound className="h-3.5 w-3.5 text-brand" />
+                  Room PIN
+                </label>
+                <Input
+                  id="pin"
+                  type="password"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleJoin()}
+                  placeholder="Enter the network PIN"
+                  maxLength={32}
+                  className="h-11"
+                  autoComplete="off"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  This network is PIN-protected. Ask the host for the access code.
+                </p>
+              </div>
+            )}
 
             <Button
               onClick={handleJoin}

@@ -26,6 +26,7 @@ interface SelfProfile {
   deviceType: DeviceType;
   avatarColor: string;
   onboarded: boolean;
+  roomPin?: string; // the PIN the user entered during onboarding (if required)
 }
 
 interface LanState {
@@ -52,6 +53,7 @@ interface LanState {
   groupMessages: ChatMessage[];
   privateMessages: Record<string, ChatMessage[]>;
   addMessage: (m: ChatMessage) => void;
+  removeMessage: (id: string) => void;
   setGroupMessages: (m: ChatMessage[]) => void;
   setPrivateMessages: (peerId: string, m: ChatMessage[]) => void;
 
@@ -88,6 +90,10 @@ interface LanState {
   // room pin (optional gate)
   roomPin: string;
   setRoomPin: (pin: string) => void;
+
+  // sound notifications (persisted per-browser)
+  soundEnabled: boolean;
+  setSoundEnabled: (v: boolean) => void;
 }
 
 export const useLanStore = create<LanState>()(
@@ -161,6 +167,16 @@ export const useLanStore = create<LanState>()(
             };
           }
         }),
+      removeMessage: (id: string) =>
+        set((st) => ({
+          groupMessages: st.groupMessages.filter((m) => m.id !== id),
+          privateMessages: Object.fromEntries(
+            Object.entries(st.privateMessages).map(([k, msgs]) => [
+              k,
+              msgs.filter((m) => m.id !== id),
+            ])
+          ),
+        })),
       setGroupMessages: (m) => set({ groupMessages: m }),
       setPrivateMessages: (peerId, m) =>
         set((st) => ({
@@ -229,12 +245,16 @@ export const useLanStore = create<LanState>()(
 
       roomPin: "",
       setRoomPin: (pin) => set({ roomPin: pin }),
+
+      soundEnabled: true,
+      setSoundEnabled: (v) => set({ soundEnabled: v }),
     }),
     {
       name: "lan-share:store",
       partialize: (s) => ({
         self: s.self,
         roomPin: s.roomPin,
+        soundEnabled: s.soundEnabled,
       }),
     }
   )

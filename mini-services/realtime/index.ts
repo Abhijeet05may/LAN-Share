@@ -156,6 +156,29 @@ async function isDeviceBlocked(
   }
 }
 
+/**
+ * Verify a room PIN against the admin-configured value via a dedicated
+ * unauthenticated endpoint. Returns {ok:true} if PINs are disabled or the
+ * supplied PIN matches; {ok:false, reason} otherwise. Fail-open on network
+ * error so a Next.js blip doesn't lock everyone out of the realtime service.
+ */
+async function verifyRoomPin(suppliedPin: string): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const res = await fetch("http://localhost:3000/api/verify-pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: suppliedPin || "" }),
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return { ok: false, reason: "PIN verification failed" };
+    const data = await res.json();
+    return data?.ok ? { ok: true } : { ok: false, reason: data?.error || "Incorrect PIN" };
+  } catch {
+    // Fail-open on network error.
+    return { ok: true };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Server setup
 // ---------------------------------------------------------------------------
@@ -290,6 +313,17 @@ io.on("connection", (socket: Socket) => {
         });
         socket.disconnect(true);
         log(`device:join rejected (blocked) deviceId=${deviceId}`);
+        return;
+      }
+
+      // Room-PIN check (only enforced if the admin enabled it). Fail-open on
+      // network error so a Next.js blip doesn't lock everyone out.
+      const suppliedPin = typeof payload.roomPin === "string" ? payload.roomPin : "";
+      const pinCheck = await verifyRoomPin(suppliedPin);
+      if (!pinCheck.ok) {
+        socket.emit("device:kicked", { reason: pinCheck.reason || "Incorrect PIN" });
+        socket.disconnect(true);
+        log(`device:join rejected (pin) deviceId=${deviceId}`);
         return;
       }
 
@@ -484,6 +518,39 @@ io.on("connection", (socket: Socket) => {
       }
     } catch (err) {
       log(`chat:read error: ${(err as Error)?.message ?? err}`);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // chat:deleted  — a sender deleted their own message; fan out to peers.
+  // payload: { id, senderId, recipientId|null }
+  // -------------------------------------------------------------------------
+  socket.on("chat:deleted", (payload: any) => {
+    try {
+      if (!payload || typeof payload !== "object") {
+        log("chat:deleted malformed payload (not an object), ignoring");
+        return;
+      }
+      const { id, senderId, recipientId } = payload;
+      if (!id || !senderId) {
+        log(`chat:deleted missing required fields: ${JSON.stringify(payload)}`);
+        return;
+      }
+      const deletedPayload = { id, senderId, recipientId: recipientId ?? null };
+      if (deletedPayload.recipientId == null) {
+        // Group: broadcast to everyone (including sender for confirmation).
+        io.emit("chat:deleted", deletedPayload);
+      } else {
+        // Private: emit to recipient + echo to sender.
+        const recipientSocketId = deviceIdToSocket.get(deletedPayload.recipientId);
+        if (recipientSocketId) {
+          io.to(recipientSocketId).emit("chat:deleted", deletedPayload);
+        }
+        socket.emit("chat:deleted", deletedPayload);
+      }
+      log(`chat:deleted id=${id} from=${senderId}`);
+    } catch (err) {
+      log(`chat:deleted error: ${(err as Error)?.message ?? err}`);
     }
   });
 

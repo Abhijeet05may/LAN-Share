@@ -12,6 +12,8 @@ import {
   ChevronLeft,
   Ban,
   ShieldOff,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -153,6 +155,7 @@ function ShellInner() {
 
           {/* Actions */}
           <div className="flex items-center gap-1 shrink-0">
+            <SoundToggle />
             <ThemeToggle />
             <Button
               variant="ghost"
@@ -340,6 +343,27 @@ function ChatDisabled({
         An admin has turned off {mode === "group" ? "group" : "private"} messaging for this network. You can still share files and view the network info.
       </p>
     </div>
+  );
+}
+
+function SoundToggle() {
+  const soundEnabled = useLanStore((s) => s.soundEnabled);
+  const setSoundEnabled = useLanStore((s) => s.setSoundEnabled);
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-9 w-9"
+      onClick={() => setSoundEnabled(!soundEnabled)}
+      title={soundEnabled ? "Mute notifications" : "Unmute notifications"}
+      aria-label={soundEnabled ? "Mute notifications" : "Unmute notifications"}
+    >
+      {soundEnabled ? (
+        <Volume2 className="h-4 w-4" />
+      ) : (
+        <VolumeX className="h-4 w-4 text-muted-foreground" />
+      )}
+    </Button>
   );
 }
 

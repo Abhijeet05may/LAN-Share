@@ -74,6 +74,14 @@ export function DashboardSection() {
     void load();
   }, [load]);
 
+  // Auto-refresh every 10 seconds while the dashboard is visible.
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      void load();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [load]);
+
   if (loading && !data) {
     return (
       <div className="space-y-4">
@@ -111,8 +119,11 @@ export function DashboardSection() {
     <div className="space-y-5">
       {/* Header row */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          Live snapshot of your LAN Share server.
+        <p className="text-sm text-muted-foreground flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--online)] animate-pulse-dot" />
+            Live · auto-refreshes every 10s
+          </span>
         </p>
         <Button
           variant="outline"

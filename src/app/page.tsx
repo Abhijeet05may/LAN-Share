@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
 import { Onboarding } from "@/components/lan/Onboarding";
 import { AppShell } from "@/components/lan/AppShell";
 import { useLanStore } from "@/lib/lan/store";
 
 export default function Home() {
   const self = useLanStore((s) => s.self);
+  const publicSettings = useLanStore((s) => s.publicSettings);
+  const { setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -15,6 +18,17 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
   }, []);
+
+  // Apply the admin-configured default theme ONCE on first visit, but only if
+  // the user hasn't already chosen a theme (next-themes stores the choice).
+  // This respects the admin setting without overriding an explicit user choice.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hasUserChoice = localStorage.getItem("theme") !== null;
+    if (!hasUserChoice && publicSettings.themeDefault) {
+      setTheme(publicSettings.themeDefault);
+    }
+  }, [publicSettings.themeDefault, setTheme]);
 
   // Avoid hydration flash before persisted state loads.
   if (!mounted) {

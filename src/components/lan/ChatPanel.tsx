@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Send, Lock, Users, Search, X, ArrowDown } from "lucide-react";
+import { Send, Lock, Users, Search, X, ArrowDown, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,6 +35,7 @@ export function ChatPanel({
   const setPrivateMessages = useLanStore((s) => s.setPrivateMessages);
   const typing = useLanStore((s) => s.typing);
   const addMessage = useLanStore((s) => s.addMessage);
+  const removeMessage = useLanStore((s) => s.removeMessage);
   const clearUnread = useLanStore((s) => s.clearUnread);
   const publicSettings = useLanStore((s) => s.publicSettings);
 
@@ -174,6 +175,33 @@ export function ChatPanel({
     setInput("");
   }, [input, self, isGroup, conversationId, addMessage, typingEnabled]);
 
+  const handleDelete = useCallback(
+    async (id: string) => {
+      if (!self) return;
+      // Optimistically remove from the local store.
+      removeMessage(id);
+      // Notify peers via socket (fire-and-forget; server is source of truth).
+      const socket = lanSocket.get();
+      if (socket?.connected) {
+        socket.emit("chat:deleted", {
+          id,
+          senderId: self.deviceId,
+          recipientId: isGroup ? null : conversationId,
+        });
+      }
+      // Persist the deletion on the server.
+      try {
+        await fetch(
+          `/api/messages/${id}?senderId=${encodeURIComponent(self.deviceId)}`,
+          { method: "DELETE" }
+        );
+      } catch {
+        /* non-fatal — the message is already removed locally */
+      }
+    },
+    [self, isGroup, conversationId, removeMessage]
+  );
+
   const handleInput = (value: string) => {
     // Enforce client-side max message length (server also enforces).
     const clamped = maxLen > 0 ? value.slice(0, maxLen) : value;
@@ -269,6 +297,7 @@ export function ChatPanel({
                     mine={mine}
                     showHeader={showHeader}
                     isGroup={isGroup}
+                    onDelete={handleDelete}
                   />
                 </div>
               );
@@ -362,16 +391,19 @@ function MessageBubble({
   mine,
   showHeader,
   isGroup,
+  onDelete,
 }: {
   msg: ChatMessage;
   mine: boolean;
   showHeader: boolean;
   isGroup: boolean;
+  onDelete?: (id: string) => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
   return (
     <div
       className={cn(
-        "flex gap-2.5 animate-fade-in",
+        "group/msg flex gap-2.5 animate-fade-in",
         mine ? "flex-row-reverse" : "flex-row",
         showHeader ? "mt-3" : "mt-0.5"
       )}
@@ -411,15 +443,52 @@ function MessageBubble({
             </span>
           </div>
         )}
-        <div
-          className={cn(
-            "rounded-2xl px-3.5 py-2 text-sm break-words shadow-sm",
-            mine
-              ? "bg-brand text-brand-foreground rounded-br-md"
-              : "bg-card border rounded-bl-md"
+        <div className={cn("flex items-end gap-1", mine && "flex-row-reverse")}>
+          <div
+            className={cn(
+              "rounded-2xl px-3.5 py-2 text-sm break-words shadow-sm",
+              mine
+                ? "bg-brand text-brand-foreground rounded-br-md"
+                : "bg-card border rounded-bl-md"
+            )}
+          >
+            <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+          </div>
+          {/* Delete action — only for the sender's own messages, revealed on hover */}
+          {mine && onDelete && (
+            <div className="opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity pb-0.5">
+              {confirming ? (
+                <div className="flex items-center gap-0.5 animate-fade-in">
+                  <button
+                    onClick={() => {
+                      onDelete(msg.id);
+                      setConfirming(false);
+                    }}
+                    className="h-6 px-2 rounded-md text-[10px] font-medium bg-destructive text-white hover:bg-destructive/90 transition-colors"
+                    title="Confirm delete"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setConfirming(false)}
+                    className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted transition-colors flex items-center justify-center"
+                    title="Cancel"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirming(true)}
+                  className="h-6 w-6 rounded-md text-muted-foreground hover:bg-muted hover:text-destructive transition-colors flex items-center justify-center"
+                  title="Delete message"
+                  aria-label="Delete message"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           )}
-        >
-          <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
         </div>
       </div>
     </div>
