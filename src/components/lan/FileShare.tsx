@@ -6,6 +6,7 @@ import {
   File as FileIcon,
   Download,
   Trash2,
+  ArrowUpDown,
   Users,
   User,
   CheckCircle2,
@@ -82,29 +83,43 @@ export function FileShare() {
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null);
   const [typeFilter, setTypeFilter] = useState<"all" | "image" | "doc" | "video" | "other">("all");
+  const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const previewEnabled = publicSettings.filePreviewEnabled;
 
   const others = devices.filter((d) => d.deviceId !== self?.deviceId);
 
-  // Filter file history by type.
+  // Filter + sort file history.
   const filteredFiles = useMemo(() => {
-    if (typeFilter === "all") return files;
-    return files.filter((f) => {
-      const mime = f.mimeType || "";
-      const ext = (f.extension || "").toLowerCase();
-      if (typeFilter === "image") return /^image\//.test(mime);
-      if (typeFilter === "video") return /^video\//.test(mime);
-      if (typeFilter === "doc")
-        return (
-          mime === "application/pdf" ||
-          ["doc", "docx", "txt", "md", "pdf", "rtf"].includes(ext)
-        );
-      // other = not image/video/doc
-      return !/^image\//.test(mime) && !/^video\//.test(mime) && mime !== "application/pdf";
-    });
-  }, [files, typeFilter]);
+    let list = files;
+    if (typeFilter !== "all") {
+      list = list.filter((f) => {
+        const mime = f.mimeType || "";
+        const ext = (f.extension || "").toLowerCase();
+        if (typeFilter === "image") return /^image\//.test(mime);
+        if (typeFilter === "video") return /^video\//.test(mime);
+        if (typeFilter === "doc")
+          return (
+            mime === "application/pdf" ||
+            ["doc", "docx", "txt", "md", "pdf", "rtf"].includes(ext)
+          );
+        // other = not image/video/doc
+        return !/^image\//.test(mime) && !/^video\//.test(mime) && mime !== "application/pdf";
+      });
+    }
+    // Sort a copy so we don't mutate the store array.
+    const sorted = [...list];
+    if (sortBy === "name") {
+      sorted.sort((a, b) => (a.originalName || "").localeCompare(b.originalName || ""));
+    } else if (sortBy === "size") {
+      sorted.sort((a, b) => (b.size || 0) - (a.size || 0));
+    } else {
+      // date desc (default) — newest first
+      sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    return sorted;
+  }, [files, typeFilter, sortBy]);
 
   // Load file history.
   const refreshFiles = useCallback(async () => {
@@ -382,27 +397,47 @@ export function FileShare() {
               </Button>
             </div>
             {files.length > 0 && (
-              <div className="flex items-center gap-1 flex-wrap px-1">
-                {([
-                  ["all", "All"],
-                  ["image", "Images"],
-                  ["doc", "Docs"],
-                  ["video", "Videos"],
-                  ["other", "Other"],
-                ] as const).map(([key, label]) => (
-                  <button
-                    key={key}
-                    onClick={() => setTypeFilter(key)}
-                    className={cn(
-                      "h-7 px-2.5 rounded-full text-[11px] font-medium border transition-colors",
-                      typeFilter === key
-                        ? "bg-brand text-brand-foreground border-brand"
-                        : "bg-background text-muted-foreground hover:bg-muted border-border"
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between gap-2 flex-wrap px-1">
+                <div className="flex items-center gap-1 flex-wrap">
+                  {([
+                    ["all", "All"],
+                    ["image", "Images"],
+                    ["doc", "Docs"],
+                    ["video", "Videos"],
+                    ["other", "Other"],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setTypeFilter(key)}
+                      className={cn(
+                        "h-7 px-2.5 rounded-full text-[11px] font-medium border transition-colors",
+                        typeFilter === key
+                          ? "bg-brand text-brand-foreground border-brand"
+                          : "bg-background text-muted-foreground hover:bg-muted border-border"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {/* Sort control */}
+                <div className="flex items-center gap-0.5 text-[11px]">
+                  <ArrowUpDown className="h-3 w-3 text-muted-foreground mr-1" />
+                  {(["date", "name", "size"] as const).map((key) => (
+                    <button
+                      key={key}
+                      onClick={() => setSortBy(key)}
+                      className={cn(
+                        "h-6 px-2 rounded-md font-medium transition-colors capitalize",
+                        sortBy === key
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {key}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {files.length === 0 ? (
@@ -523,6 +558,7 @@ function FileCard({
         <FileThumbnail
           fileId={file.id}
           isImage={isImageMime(file.mimeType)}
+          isVideo={/^video\//.test(file.mimeType)}
           Icon={Icon}
         />
       </button>
@@ -605,21 +641,40 @@ function FileCard({
   );
 }
 
-// Renders an image thumbnail (lazy-loaded from /api/download/:id) for image
-// files, falling back to the file-type icon for non-images or on load error.
+// Renders a thumbnail: image files lazy-load the actual image; video files
+// capture a frame via a <video> + <canvas> (browser-side, no ffmpeg needed);
+// other types fall back to the file-type icon.
 function FileThumbnail({
   fileId,
   isImage,
+  isVideo,
   Icon,
 }: {
   fileId: string;
   isImage: boolean;
+  isVideo: boolean;
+  Icon: React.ComponentType<{ className?: string }>;
+}) {
+  if (isImage) {
+    return <ImageThumbnail fileId={fileId} Icon={Icon} />;
+  }
+  if (isVideo) {
+    return <VideoThumbnail fileId={fileId} Icon={Icon} />;
+  }
+  return <Icon className="h-8 w-8 text-muted-foreground" />;
+}
+
+function ImageThumbnail({
+  fileId,
+  Icon,
+}: {
+  fileId: string;
   Icon: React.ComponentType<{ className?: string }>;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
 
-  if (!isImage || errored) {
+  if (errored) {
     return <Icon className="h-8 w-8 text-muted-foreground" />;
   }
 
@@ -644,6 +699,98 @@ function FileThumbnail({
           loaded ? "opacity-100" : "opacity-0"
         )}
       />
+    </>
+  );
+}
+
+// Captures a single frame from a video file using a hidden <video> element
+// + a <canvas>. The frame is rendered as a data URL thumbnail. Falls back
+// to the film icon on any error. A play badge overlays the thumbnail so the
+// user knows it's a video.
+function VideoThumbnail({
+  fileId,
+  Icon,
+}: {
+  fileId: string;
+  Icon: React.ComponentType<{ className?: string }>;
+}) {
+  const [thumb, setThumb] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (thumb || failed) return;
+    const video = document.createElement("video");
+    videoRef.current = video;
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.preload = "metadata";
+    video.src = `/api/download/${fileId}`;
+
+    const onLoaded = () => {
+      // Seek to ~10% in or 1s, whichever is smaller, to get a representative frame.
+      const target = Math.min(1, (video.duration || 2) * 0.1);
+      video.currentTime = isFinite(target) ? target : 0;
+    };
+    const onSeeked = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth || 320;
+        canvas.height = video.videoHeight || 180;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          setFailed(true);
+          return;
+        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        setThumb(canvas.toDataURL("image/jpeg", 0.7));
+      } catch {
+        setFailed(true);
+      }
+    };
+    const onError = () => setFailed(true);
+
+    video.addEventListener("loadeddata", onLoaded);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("error", onError);
+    // Some browsers need a play() to decode the frame.
+    void video.play().then(() => video.pause()).catch(() => {});
+
+    return () => {
+      video.removeEventListener("loadeddata", onLoaded);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+      video.src = "";
+    };
+  }, [fileId, thumb, failed]);
+
+  if (failed) {
+    return <Icon className="h-8 w-8 text-muted-foreground" />;
+  }
+
+  if (!thumb) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <img
+        src={thumb}
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover"
+      />
+      {/* Play badge overlay */}
+      <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+        <div className="h-8 w-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center">
+          <svg viewBox="0 0 24 24" fill="white" className="h-4 w-4 ml-0.5">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </div>
+      </div>
     </>
   );
 }

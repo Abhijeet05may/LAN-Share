@@ -141,12 +141,23 @@ function ShellInner() {
                     ? "Group Chat"
                     : peer?.name || "Private Chat"}
                 </p>
-                <p className="text-[11px] text-muted-foreground truncate">
-                  {activeConversation === "group"
-                    ? `${onlineCount} device${onlineCount === 1 ? "" : "s"} connected`
-                    : peer?.online
-                    ? "Online"
-                    : "Offline"}
+                <p className="text-[11px] text-muted-foreground truncate flex items-center justify-center gap-1.5">
+                  {activeConversation === "group" ? (
+                    <>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--online)] animate-pulse-dot" />
+                        <span className="text-[var(--online)] font-medium tabular-nums">{onlineCount}</span>
+                        <span>online</span>
+                      </span>
+                    </>
+                  ) : peer?.online ? (
+                    <>
+                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--online)] animate-pulse-dot" />
+                      <span>Online</span>
+                    </>
+                  ) : (
+                    "Offline"
+                  )}
                 </p>
               </div>
             </div>
