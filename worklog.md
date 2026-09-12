@@ -626,3 +626,64 @@ Task: Periodic QA round — implement last round's priority recommendations (fil
 7. **Admin "kick reason" input** — the admin kick/block flow doesn't let the admin type a reason that's shown to the user. Low value.
 
 Priority recommendation for the next round: **#4 (message read receipts)** as the highest user-value gap (users can't tell if their private messages were seen), then **#2 (per-conversation mute)** if user feedback requests it.
+
+---
+Task ID: 14
+Agent: cron-review-202609130345 (main)
+Task: Periodic QA round — implement last round's priority recommendations (message read receipts, per-conversation mute) + admin activity sparkline.
+
+## Current project status / assessment
+- Next.js was down at start (sandbox reaper); socket.io (3003) + internal (3004) were up. Lint baseline: clean.
+- Brought Next.js back via the blocking-call technique (`node ... next dev --webpack --max-old-space-size=768`) for verification.
+- Quick QA confirmed main app + admin stable, no regressions.
+- Implemented the top 2 recommendations from Task 13's handover (read receipts, per-conversation mute) plus the admin activity sparkline.
+
+## Completed modifications + verification
+
+### 1. Message read receipts (top recommendation)
+- **Backend:** `src/app/api/messages/[id]/read/route.ts` — new `POST {readerId}` endpoint. Only private messages (recipientId != null) get receipts; only the recipient can mark read; idempotent (no-op if already read).
+- **Realtime:** `mini-services/realtime/index.ts` — new `chat:read-receipt` socket event. The recipient emits `{id, readerId, senderId}`; the service routes it to the original sender's socket.
+- **RealtimeProvider:** `chat:read-receipt` listener wired → calls `updateMessage(id, {read:true})`.
+- **ChatPanel:** new effect that, for private conversations, marks all unread incoming messages as read when the conversation is open + visible, then fires `POST /api/messages/[id]/read` + socket `chat:read-receipt` to the sender.
+- **UI:** `MessageBubble` now renders a "seen" indicator (CheckCheck icon in `var(--online)` green + "seen" text) below the bubble for the sender's own private messages once `msg.read` is true. Hidden for group chat.
+- **Verified:** backend endpoint + socket handler syntax-checked and lint-clean. Full multi-device "seen" flow is wired (needs 2 browsers to fully exercise in this single-browser sandbox, but the store update + render path are correct).
+
+### 2. Per-conversation notification mute
+- **Store:** added `mutedConversations: string[]` (keyed by ConversationId — "group" or peer deviceId) + `toggleConversationMuted(c)`. Persisted in localStorage via `partialize`.
+- **RealtimeProvider:** `onChatMessage` now computes the incoming message's conversation id and skips the sound + desktop notification when the conversation is muted. Uses a `mutedRef` (ref mirror) so the socket handlers read the latest mute state without recreating the socket.
+- **ChatPanel:** new Bell/BellOff toggle button in the input row (next to Search). When muted, an amber banner ("Notifications muted for this group chat / conversation") shows at the top of the panel with a BellOff icon.
+- **DeviceList:** `ConversationRow` now accepts a `muted` prop and renders a small BellOff icon next to the title of muted conversations (group + per-device). The user can see at a glance which conversations are muted.
+- **Verified:** clicked the per-conversation Bell button → amber "Notifications muted" banner appeared + sidebar Group Chat row showed a BellOff icon + the button switched to "Unmute notifications" → clicked again → banner gone + icon removed. ✓
+
+### 3. Admin activity sparkline (styling polish)
+- **DashboardSection:** added a `history` state (max 20 samples) that appends `activeConnections` on every dashboard refresh (keyed on `data` so it appends per-poll even when the value is unchanged). The Active connections stat tile now renders an inline SVG sparkline (polyline + end-dot) when ≥2 samples exist, colored by accent (`var(--online)` for the active tile).
+- **Sparkline component:** lightweight inline SVG (56×22), normalizes min/max range, renders a polyline + a small circle at the latest point.
+- **Verified:** dashboard renders; sparkline populates after the auto-refresh cycle (every 10s). ✓
+
+## Verification results
+- `bun run lint` → clean (0 errors, 0 warnings).
+- agent-browser (via gateway port 81):
+  - Per-conversation mute: Bell toggle → banner appeared + sidebar BellOff icon + button switched to "Unmute" → toggled back ✓
+  - Admin dashboard: active connections tile shows live count + sparkline after samples accumulate ✓
+  - Read receipts: backend endpoint + socket handler syntax-clean; full multi-device "seen" flow wired (needs 2 browsers to fully exercise) ✓
+- Realtime service syntax-checked (`bun build --no-bundle`) and restarted to pick up the `chat:read-receipt` handler.
+
+## Files changed this round
+- `src/app/api/messages/[id]/read/route.ts` — NEW: mark-private-message-read endpoint.
+- `mini-services/realtime/index.ts` — added `chat:read-receipt` socket event handler.
+- `src/lib/lan/RealtimeProvider.tsx` — `chat:read-receipt` listener, `mutedRef` + per-conversation mute in `onChatMessage`.
+- `src/lib/lan/store.ts` — `mutedConversations` array + `toggleConversationMuted`, persisted.
+- `src/components/lan/ChatPanel.tsx` — read-receipt mark-as-read effect, "seen" CheckCheck indicator on own private messages, Bell/BellOff mute toggle + amber muted banner, `updateMessage` hook.
+- `src/components/lan/DeviceList.tsx` — `muted` prop on ConversationRow + BellOff icon indicator.
+- `src/components/lan/admin/sections/DashboardSection.tsx` — `history` state + `Sparkline` component + `sparkline` prop on StatTile.
+
+## Unresolved issues / risks + next-phase recommendations
+1. **Environmental (unchanged):** Next.js dev server still dies ~30-55s after a Bash tool call due to the sandbox process-reaper. The system-started instance + the recurring 15-min cron job handle restart + QA. Code is correct.
+2. **File drag-drop onto a specific device in the sidebar** — currently files are sent via the Files tab's recipient picker. Dragging a file directly onto a device in the sidebar would be a UX shortcut. Medium value.
+3. **Connection quality indicator** — show a signal-strength icon based on socket.io latency/RTT. Low value.
+4. **Admin "kick reason" input** — the admin kick/block flow doesn't let the admin type a reason shown to the user. Low value.
+5. **Unread badge should not increment for muted conversations** — currently the store's `addMessage` increments unread for muted conversations too; the mute only suppresses sound/notifications. Could skip the unread increment when muted (or show a dimmed badge). Low value.
+6. **Emoji picker** — add a small emoji picker to the chat input. Low value.
+7. **File type filter in file history** — let the user filter the file history by type (image/doc/video/etc). Low value.
+
+Priority recommendation for the next round: **#2 (file drag-drop onto a device)** as the highest UX-value gap (a natural shortcut users expect), then **#5 (muted unread badge)** if user feedback requests it.

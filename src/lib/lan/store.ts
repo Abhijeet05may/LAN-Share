@@ -95,6 +95,10 @@ interface LanState {
   // sound notifications (persisted per-browser)
   soundEnabled: boolean;
   setSoundEnabled: (v: boolean) => void;
+
+  // per-conversation mute (persisted). Keyed by ConversationId ("group" or peer deviceId).
+  mutedConversations: string[];
+  toggleConversationMuted: (c: ConversationId) => void;
 }
 
 export const useLanStore = create<LanState>()(
@@ -261,6 +265,14 @@ export const useLanStore = create<LanState>()(
 
       soundEnabled: true,
       setSoundEnabled: (v) => set({ soundEnabled: v }),
+
+      mutedConversations: [],
+      toggleConversationMuted: (c) =>
+        set((st) => ({
+          mutedConversations: st.mutedConversations.includes(c)
+            ? st.mutedConversations.filter((x) => x !== c)
+            : [...st.mutedConversations, c],
+        })),
     }),
     {
       name: "lan-share:store",
@@ -268,6 +280,7 @@ export const useLanStore = create<LanState>()(
         self: s.self,
         roomPin: s.roomPin,
         soundEnabled: s.soundEnabled,
+        mutedConversations: s.mutedConversations,
       }),
     }
   )

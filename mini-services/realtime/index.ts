@@ -595,6 +595,33 @@ io.on("connection", (socket: Socket) => {
   });
 
   // -------------------------------------------------------------------------
+  // chat:read-receipt  — the recipient read a private message; relay to sender.
+  // payload: { id, readerId, senderId }
+  // -------------------------------------------------------------------------
+  socket.on("chat:read-receipt", (payload: any) => {
+    try {
+      if (!payload || typeof payload !== "object") {
+        log("chat:read-receipt malformed payload (not an object), ignoring");
+        return;
+      }
+      const { id, readerId, senderId } = payload;
+      if (!id || !readerId || !senderId) {
+        log(`chat:read-receipt missing required fields: ${JSON.stringify(payload)}`);
+        return;
+      }
+      const receiptPayload = { id, readerId, senderId, read: true };
+      // Route to the original sender's socket.
+      const senderSocketId = deviceIdToSocket.get(senderId);
+      if (senderSocketId) {
+        io.to(senderSocketId).emit("chat:read-receipt", receiptPayload);
+      }
+      log(`chat:read-receipt id=${id} reader=${readerId} sender=${senderId}`);
+    } catch (err) {
+      log(`chat:read-receipt error: ${(err as Error)?.message ?? err}`);
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // file:sent
   // -------------------------------------------------------------------------
   socket.on("file:sent", (payload: any) => {

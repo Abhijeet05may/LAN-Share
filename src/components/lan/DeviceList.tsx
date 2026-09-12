@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Users, MessageCircle, Wifi, WifiOff, Crown } from "lucide-react";
+import { Users, MessageCircle, Wifi, WifiOff, Crown, BellOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -24,6 +24,7 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
   const unread = useLanStore((s) => s.unread);
   const connected = useLanStore((s) => s.connected);
   const clearUnread = useLanStore((s) => s.clearUnread);
+  const mutedConversations = useLanStore((s) => s.mutedConversations);
 
   const others = useMemo(
     () =>
@@ -108,6 +109,7 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
             title="Group Chat"
             subtitle="Everyone on the network"
             unread={groupUnread}
+            muted={mutedConversations.includes("group")}
             accent
           />
 
@@ -155,6 +157,7 @@ export function DeviceList({ onSelect, className }: DeviceListProps) {
                       : "Offline"
                   }
                   unread={convUnread}
+                  muted={mutedConversations.includes(d.deviceId)}
                 />
               );
             })
@@ -173,6 +176,7 @@ function ConversationRow({
   title,
   subtitle,
   unread,
+  muted,
   accent,
 }: {
   active: boolean;
@@ -182,6 +186,7 @@ function ConversationRow({
   title: string;
   subtitle: string;
   unread?: number;
+  muted?: boolean;
   accent?: boolean;
 }) {
   return (
@@ -210,7 +215,12 @@ function ConversationRow({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium truncate">{title}</span>
+          <span className="text-sm font-medium truncate flex items-center gap-1.5">
+            {title}
+            {muted && (
+              <BellOff className="h-3 w-3 text-muted-foreground/70 shrink-0" />
+            )}
+          </span>
           {unread ? (
             <Badge className="bg-brand text-brand-foreground h-5 min-w-5 px-1.5 text-[11px] flex items-center justify-center">
               {unread > 99 ? "99+" : unread}

@@ -19,6 +19,9 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const soundEnabled = useLanStore((s) => s.soundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
+  const mutedConversations = useLanStore((s) => s.mutedConversations);
+  const mutedRef = useRef(mutedConversations);
+  mutedRef.current = mutedConversations;
   const setTyping = useLanStore((s) => s.setTyping);
   const clearTyping = useLanStore((s) => s.clearTyping);
   const addFile = useLanStore((s) => s.addFile);
@@ -76,11 +79,20 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       if (!msg) return;
       addMessage(msg);
       const isMine = msg.senderId === self.deviceId;
-      // Play a sound for incoming (non-self) messages when enabled.
-      if (!isMine && soundEnabledRef.current) {
+      // Compute the conversation id so we can respect per-conversation mute.
+      // Group messages → "group"; private → the OTHER party's deviceId.
+      const conversationId =
+        msg.recipientId === null
+          ? "group"
+          : msg.recipientId === self.deviceId
+          ? msg.senderId
+          : msg.recipientId;
+      const muted = mutedRef.current.includes(conversationId);
+      // Play a sound for incoming (non-self) messages when enabled + not muted.
+      if (!isMine && soundEnabledRef.current && !muted) {
         import("./sound").then(({ playMessageSound }) => playMessageSound()).catch(() => {});
       }
-      if (!isMine && typeof document !== "undefined" && document.hidden) {
+      if (!isMine && !muted && typeof document !== "undefined" && document.hidden) {
         try {
           if (Notification.permission === "granted") {
             new Notification(
@@ -110,6 +122,12 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         edited: true,
         ...(data.timestamp ? { timestamp: String(data.timestamp) } : {}),
       });
+    };
+
+    // A recipient read one of my private messages → mark it read so I see "seen".
+    const onChatReadReceipt = (data: { id: string; read?: boolean }) => {
+      if (!data?.id) return;
+      updateMessage(data.id, { read: true });
     };
 
     const onDeviceKicked = (data: { reason?: string }) => {
@@ -192,6 +210,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     socket.on("chat:typing", onChatTyping);
     socket.on("chat:deleted", onChatDeleted);
     socket.on("chat:edited", onChatEdited);
+    socket.on("chat:read-receipt", onChatReadReceipt);
     socket.on("file:sent", onFileSent);
     socket.on("file:downloaded", onFileDownloaded);
 
@@ -216,6 +235,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       socket.off("chat:typing", onChatTyping);
       socket.off("chat:deleted", onChatDeleted);
       socket.off("chat:edited", onChatEdited);
+      socket.off("chat:read-receipt", onChatReadReceipt);
       socket.off("file:sent", onFileSent);
       socket.off("file:downloaded", onFileDownloaded);
       typingTimers.forEach((t) => clearTimeout(t));

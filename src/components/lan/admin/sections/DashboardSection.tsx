@@ -82,6 +82,16 @@ export function DashboardSection() {
     return () => clearInterval(id);
   }, [load]);
 
+  // Track active-connection history for the sparkline (max 20 samples).
+  // Key on `data` (a fresh object each refresh) so we append a sample per
+  // poll even when the value is unchanged.
+  const [history, setHistory] = React.useState<number[]>([]);
+  React.useEffect(() => {
+    if (data) {
+      setHistory((prev) => [...prev, data.activeConnections].slice(-20));
+    }
+  }, [data]);
+
   if (loading && !data) {
     return (
       <div className="space-y-4">
@@ -155,6 +165,7 @@ export function DashboardSection() {
           value={String(d.activeConnections)}
           hint="live sockets"
           accent="online"
+          sparkline={history.length > 1 ? history : undefined}
         />
         <StatTile
           icon={<Users className="h-4 w-4" />}
@@ -264,9 +275,10 @@ interface StatTileProps {
   value: string;
   hint?: string;
   accent?: "brand" | "online" | "muted";
+  sparkline?: number[];
 }
 
-function StatTile({ icon, label, value, hint, accent = "muted" }: StatTileProps) {
+function StatTile({ icon, label, value, hint, accent = "muted", sparkline }: StatTileProps) {
   return (
     <div className="rounded-xl border bg-card p-4 flex flex-col gap-2 min-h-[110px]">
       <div className="flex items-center justify-between gap-2">
@@ -285,14 +297,59 @@ function StatTile({ icon, label, value, hint, accent = "muted" }: StatTileProps)
         </span>
       </div>
       <div className="mt-auto">
-        <p className="text-xl sm:text-2xl font-bold tracking-tight break-all">
-          {value}
-        </p>
+        <div className="flex items-end justify-between gap-2">
+          <p className="text-xl sm:text-2xl font-bold tracking-tight break-all">
+            {value}
+          </p>
+          {sparkline && sparkline.length > 1 && (
+            <Sparkline data={sparkline} accent={accent} />
+          )}
+        </div>
         {hint ? (
           <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Inline SVG sparkline of recent numeric samples.
+function Sparkline({ data, accent = "online" }: { data: number[]; accent?: string }) {
+  const w = 56;
+  const h = 22;
+  const max = Math.max(1, ...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((v - min) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const color =
+    accent === "online"
+      ? "var(--online)"
+      : accent === "brand"
+      ? "var(--brand)"
+      : "var(--muted-foreground)";
+  return (
+    <svg width={w} height={h} className="shrink-0 overflow-visible" aria-hidden="true">
+      <polyline
+        points={pts.join(" ")}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {data.length > 1 && (
+        <circle
+          cx={w}
+          cy={h - ((data[data.length - 1] - min) / range) * h}
+          r={1.8}
+          fill={color}
+        />
+      )}
+    </svg>
   );
 }
 

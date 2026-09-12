@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Send, Lock, Users, Search, X, ArrowDown, Trash2, Pencil, Check } from "lucide-react";
+import { Send, Lock, Users, Search, X, ArrowDown, Trash2, Pencil, Check, CheckCheck, Bell, BellOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -39,6 +39,8 @@ export function ChatPanel({
   const updateMessage = useLanStore((s) => s.updateMessage);
   const clearUnread = useLanStore((s) => s.clearUnread);
   const publicSettings = useLanStore((s) => s.publicSettings);
+  const mutedConversations = useLanStore((s) => s.mutedConversations);
+  const toggleConversationMuted = useLanStore((s) => s.toggleConversationMuted);
 
   const isGroup = conversationId === "group";
   const [input, setInput] = useState("");
@@ -135,6 +137,39 @@ export function ChatPanel({
   useEffect(() => {
     clearUnread(conversationId);
   }, [conversationId, clearUnread]);
+
+  // Read receipts: mark incoming private messages as read when this
+  // conversation is open + visible, and notify each sender via socket.
+  useEffect(() => {
+    if (!self || isGroup) return;
+    const socket = lanSocket.get();
+    const incoming = messages.filter(
+      (m) =>
+        m.senderId !== self.deviceId &&
+        m.recipientId === self.deviceId &&
+        !m.read
+    );
+    if (incoming.length === 0) return;
+    // Mark them read locally.
+    for (const m of incoming) {
+      updateMessage(m.id, { read: true });
+    }
+    // Fire-and-forget: persist the read state + notify senders.
+    for (const m of incoming) {
+      if (socket?.connected) {
+        socket.emit("chat:read-receipt", {
+          id: m.id,
+          readerId: self.deviceId,
+          senderId: m.senderId,
+        });
+      }
+      fetch(`/api/messages/${m.id}/read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ readerId: self.deviceId }),
+      }).catch(() => {});
+    }
+  }, [self, isGroup, messages, updateMessage]);
 
   const typingEntries = typing[conversationId] || [];
 
@@ -257,6 +292,15 @@ export function ChatPanel({
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {/* Muted indicator banner */}
+      {mutedConversations.includes(conversationId) && (
+        <div className="shrink-0 border-b bg-amber-500/10 px-3 py-1.5 flex items-center justify-center gap-1.5 animate-fade-in">
+          <BellOff className="h-3.5 w-3.5 text-amber-600 dark:text-amber-500" />
+          <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+            Notifications muted for this {isGroup ? "group chat" : "conversation"}
+          </span>
+        </div>
+      )}
       {/* Search bar (collapsible) */}
       {searchOpen && (
         <div className="shrink-0 border-b bg-card/60 backdrop-blur-sm px-3 py-2 flex items-center gap-2 animate-slide-up">
@@ -367,6 +411,20 @@ export function ChatPanel({
             title="Search"
           >
             <Search className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0"
+            onClick={() => toggleConversationMuted(conversationId)}
+            aria-label={mutedConversations.includes(conversationId) ? "Unmute conversation" : "Mute conversation"}
+            title={mutedConversations.includes(conversationId) ? "Unmute notifications" : "Mute notifications"}
+          >
+            {mutedConversations.includes(conversationId) ? (
+              <BellOff className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <Bell className="h-4 w-4" />
+            )}
           </Button>
           <div className="flex-1 relative">
             <Textarea
@@ -568,15 +626,24 @@ function MessageBubble({
               </div>
             </div>
           ) : (
-            <div
-              className={cn(
-                "rounded-2xl px-3.5 py-2 text-sm break-words shadow-sm",
-                mine
-                  ? "bg-brand text-brand-foreground rounded-br-md"
-                  : "bg-card border rounded-bl-md"
+            <div className="flex flex-col gap-0.5">
+              <div
+                className={cn(
+                  "rounded-2xl px-3.5 py-2 text-sm break-words shadow-sm",
+                  mine
+                    ? "bg-brand text-brand-foreground rounded-br-md"
+                    : "bg-card border rounded-bl-md"
+                )}
+              >
+                <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+              </div>
+              {/* Read receipt: "seen" checkmark on my private messages once read */}
+              {mine && !isGroup && msg.read && (
+                <span className={cn("flex items-center gap-0.5 text-[9px] text-muted-foreground animate-fade-in", mine ? "self-end pr-1" : "self-start pl-1")}>
+                  <CheckCheck className="h-3 w-3 text-[var(--online)]" />
+                  seen
+                </span>
               )}
-            >
-              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
             </div>
           )}
           {/* Edit + Delete actions — only for the sender's own messages, revealed on hover (hidden while editing) */}
